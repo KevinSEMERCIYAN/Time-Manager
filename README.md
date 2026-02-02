@@ -61,10 +61,10 @@ chmod +x bootstrap.sh
 🌐 Accès aux services
 
     Application TimeManager :
-    [http://localhost:8080](http://timemanager.primebank.local:8080/)
+    http://localhost:8080](http://timemanager.primebank.local:8080/
 
     Interface Mailpit (emails) :
-    [http://localhost:8025](http://timemanager.primebank.local:8025/)
+    http://localhost:8025](http://timemanager.primebank.local:8025/
 
 📁 Arborescence du projet
 
