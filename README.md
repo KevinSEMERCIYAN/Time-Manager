@@ -32,6 +32,7 @@ Avant de commencer, assurez-vous que les éléments suivants sont installés sur
 ```bash
 docker --version
 docker compose version
+```
 
 📥 Récupération du projet
 🔐 LDAP (optionnel)
@@ -51,8 +52,8 @@ Backend ne démarre pas
 docker compose logs backend
 
 Problème de base de données
-docker compose down -v
-docker compose up -d --build
+`docker compose down -v
+docker compose up -d --build`
 
 Frontend sans accès API
 
@@ -81,11 +82,3 @@ Pour la production : HTTPS, gestion des secrets, build frontend statique
 📄 Licence
 
 À définir.
-
-
----
-
-Si tu veux, je peux maintenant :
-- te faire une **version encore plus “corporate / mairie”**,
-- ajouter des **icônes ASCII ou badges GitHub**,
-- ou te préparer un **README PROD séparé** (sécurité, HTTPS, AD, sauvegardes).
