@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 .env
 *.key
 *.pem
@@ -6,3 +7,32 @@
 *.cer
 *.crt
 *.log
+=======
+# Env / secrets
+.env
+*.env
+.env.*
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+
+# Logs
+*.log
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Docker
+**/.docker/
+
+# Build
+dist/
+build/
+>>>>>>> 9ac17cd (Initial commit - timemanager)

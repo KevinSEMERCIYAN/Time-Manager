@@ -17,6 +17,21 @@ services:
 
   backend:
     build: ./backend
+<<<<<<< HEAD
+=======
+    environment:
+      LDAP_URL: ldaps://AD-01.primebank.local:636
+      LDAP_BASE_DN: DC=primebank,DC=local
+      LDAP_BIND_DN: svc_ldap_reader@primebank.local
+      LDAP_BIND_PASSWORD: change-me
+      LDAP_USER_FILTER: "(sAMAccountName={{username}})"
+      LDAP_CA_CERT_PATH: /app/certs/primebank-root-ca.cer
+      LDAP_TLS_SERVERNAME: AD-01.primebank.local
+      LDAP_DIRECT_BIND: "true"
+      LDAP_UPN_DOMAIN: primebank.local
+      JWT_SECRET: change-me
+      JWT_TTL_MINUTES: "15"
+>>>>>>> 9ac17cd (Initial commit - timemanager)
     depends_on:
       db:
         condition: service_healthy
