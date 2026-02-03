@@ -2,17 +2,10 @@
   "name": "timemanager-backend",
   "private": true,
   "version": "1.0.0",
-<<<<<<< HEAD
-  "type": "module",
-=======
->>>>>>> 9ac17cd (Initial commit - timemanager)
   "scripts": {
     "dev": "node src/index.js",
     "start": "node src/index.js"
   },
-<<<<<<< HEAD
-  "dependencies": {}
-=======
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
@@ -20,5 +13,4 @@
     "jsonwebtoken": "^9.0.2",
     "ldapjs": "^2.3.3"
   }
->>>>>>> 9ac17cd (Initial commit - timemanager)
 }

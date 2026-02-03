@@ -1,13 +1,3 @@
-<<<<<<< HEAD
-import React from "react";
-import ReactDOM from "react-dom/client";
-
-function App() {
-  return (
-    <div style={{ fontFamily: "sans-serif", padding: 24 }}>
-      <h1>TimeManager</h1>
-      <p>Frontend OK.</p>
-=======
 import React, { useEffect, useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 
@@ -824,7 +814,6 @@ function App() {
           </div>
         </div>
       )}
->>>>>>> 9ac17cd (Initial commit - timemanager)
     </div>
   );
 }
