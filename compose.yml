@@ -17,9 +17,13 @@ services:
 
   backend:
     build: ./backend
-<<<<<<< HEAD
-=======
     environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: timemanager
+      DB_USER: timemanager
+      DB_PASS: timemanager
+
       LDAP_URL: ldaps://AD-01.primebank.local:636
       LDAP_BASE_DN: DC=primebank,DC=local
       LDAP_BIND_DN: svc_ldap_reader@primebank.local
@@ -29,9 +33,13 @@ services:
       LDAP_TLS_SERVERNAME: AD-01.primebank.local
       LDAP_DIRECT_BIND: "true"
       LDAP_UPN_DOMAIN: primebank.local
+
       JWT_SECRET: change-me
       JWT_TTL_MINUTES: "15"
->>>>>>> 9ac17cd (Initial commit - timemanager)
+
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+      MAIL_FROM: no-reply@primebank.local
     depends_on:
       db:
         condition: service_healthy
@@ -64,3 +72,4 @@ services:
 
 volumes:
   db-data:
+
