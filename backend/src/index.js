@@ -81,7 +81,7 @@ app.post("/auth/login", async (req, res) => {
       {
         scope: "sub",
         filter: "(&(objectClass=user)(!(objectClass=computer)))",
-        attributes: ["dn", "sAMAccountName", "displayName"],
+        attributes: ["dn", "sAMAccountName", "displayName", "memberOf"],
       },
       (err, r) => {
         if (err) return reject(err);
@@ -93,6 +93,7 @@ app.post("/auth/login", async (req, res) => {
               username: obj.sAMAccountName,
               displayName: obj.displayName || obj.sAMAccountName,
               dn: obj.dn || "",
+              memberOf: obj.memberOf || [],
             });
           }
         });
@@ -141,7 +142,16 @@ app.post("/auth/login", async (req, res) => {
     }
 
     const memberOf = Array.isArray(u.memberOf) ? u.memberOf : (u.memberOf ? [u.memberOf] : []);
-    const has = (cn) => memberOf.some(g => g.toLowerCase().includes(`cn=${cn.toLowerCase()},`));
+  const has = (cn) => memberOf.some(g => g.toLowerCase().includes(`cn=${cn.toLowerCase()},`));
+  const rolesFromMemberOf = (memberOfList) => {
+    const list = Array.isArray(memberOfList) ? memberOfList : (memberOfList ? [memberOfList] : []);
+    const hasGroup = (cn) => list.some(g => String(g).toLowerCase().includes(`cn=${cn.toLowerCase()},`));
+    const out = [];
+    if (hasGroup("GG_TM_Admins")) out.push("ROLE_ADMIN");
+    if (hasGroup("GG_TM_Managers")) out.push("ROLE_MANAGER");
+    if (hasGroup("GG_TM_Employees")) out.push("ROLE_EMPLOYEE");
+    return out;
+  };
 
     const roles = [];
     if (has("GG_TM_Admins")) roles.push("ROLE_ADMIN");
@@ -155,11 +165,27 @@ app.post("/auth/login", async (req, res) => {
 
     const ttl = `${parseInt(process.env.JWT_TTL_MINUTES || "15", 10)}m`;
     const token = jwt.sign({ sub: normalizedUsername, roles }, process.env.JWT_SECRET, { expiresIn: ttl });
-    const allowUsersList = roles.includes("ROLE_ADMIN");
-    const usersOut = allowUsersList
-      ? users.map((x) => ({ ...x, team: getTeamFromDn(x.dn) })).map(({ dn: _dn, ...rest }) => rest)
+
+    const isAdmin = roles.includes("ROLE_ADMIN");
+    const isManager = roles.includes("ROLE_MANAGER");
+    const allowUsersList = isAdmin || isManager;
+
+    const usersOutRaw = allowUsersList
+      ? users
+          .map((x) => ({
+            ...x,
+            team: getTeamFromDn(x.dn),
+            roles: rolesFromMemberOf(x.memberOf),
+          }))
+          .map(({ dn: _dn, memberOf: _memberOf, ...rest }) => rest)
       : [];
-    res.json({ token, roles, username: normalizedUsername, displayName, team, teams, users: usersOut });
+    const usersOut = isManager && !isAdmin && team
+      ? usersOutRaw.filter((u) => u.team === team)
+      : usersOutRaw;
+
+    const teamsOut = isAdmin ? teams : (team ? [team] : []);
+
+    res.json({ token, roles, username: normalizedUsername, displayName, team, teams: teamsOut, users: usersOut });
   } catch (err) {
     console.error("LDAP auth error:", err?.code || err?.name, err?.message || err);
     res.status(401).json({ error: "Invalid credentials" });
