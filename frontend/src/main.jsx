@@ -70,6 +70,9 @@ function App() {
   );
   const [newTeamName, setNewTeamName] = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
+  const [period, setPeriod] = useState("week");
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
 
   const isAdmin = roles.includes("ROLE_ADMIN");
   const isManager = roles.includes("ROLE_MANAGER");
@@ -89,8 +92,12 @@ function App() {
   };
 
   useEffect(() => {
+    if (route === "/clock-in") {
+      if (token) navigate("/dashboard");
+      else navigate("/sign-in");
+      return;
+    }
     const isProtected =
-      route === "/clock-in" ||
       route === "/profile" ||
       route === "/dashboard" ||
       route === "/dashboard/members" ||
@@ -102,7 +109,7 @@ function App() {
       return;
     }
 
-    if (token && (route === "/sign-in" || route === "/clock-in")) {
+    if (token && route === "/sign-in") {
       navigate("/dashboard");
       return;
     }
@@ -268,11 +275,63 @@ function App() {
   const scopedEntries = entries.filter((e) => scopedUsers.some((u) => u.username === e.user));
   const scopedUserEntries = scopedEntries.filter((e) => e.user === currentUser);
 
+  const periodRange = (() => {
+    const nowDate = new Date();
+    if (period === "month") {
+      const start = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1);
+      const end = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 1);
+      return { start, end, label: "mois" };
+    }
+    if (period === "year") {
+      const start = new Date(nowDate.getFullYear(), 0, 1);
+      const end = new Date(nowDate.getFullYear() + 1, 0, 1);
+      return { start, end, label: "année" };
+    }
+    return { start: weekStart, end: weekEnd, label: "semaine" };
+  })();
+
+  const customRange = (() => {
+    if (!rangeStart || !rangeEnd) return null;
+    const start = new Date(`${rangeStart}T00:00:00`);
+    const end = new Date(`${rangeEnd}T00:00:00`);
+    end.setDate(end.getDate() + 1);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+    return { start, end, label: "période" };
+  })();
+
+  const activeRange = customRange || periodRange;
+
+  const entriesInPeriod = scopedEntries.filter((e) => {
+    const dt = new Date(e.date || e.clockIn);
+    return dt >= activeRange.start && dt < activeRange.end;
+  });
+
+  const entriesInPeriodCapped = (() => {
+    if (period !== "week") return entriesInPeriod;
+    if (!isEmployee) return entriesInPeriod;
+    const byDate = new Map();
+    for (const e of entriesInPeriod) {
+      if (!e.date || !e.user) continue;
+      if (e.user !== currentUser) continue;
+      if (!byDate.has(e.date)) byDate.set(e.date, []);
+      byDate.get(e.date).push(e);
+    }
+    const dates = Array.from(byDate.keys()).sort().slice(0, 5);
+    const out = [];
+    for (const d of dates) {
+      const list = byDate.get(d) || [];
+      if (!list.length) continue;
+      list.sort((a, b) => new Date(a.clockIn) - new Date(b.clockIn));
+      out.push(list[0]);
+    }
+    return out;
+  })();
+
   const thisWeekEntries = scopedEntries.filter((e) => {
     const dt = new Date(e.date || e.clockIn);
     return dt >= weekStart && dt < weekEnd;
   });
-  const totalHours = sumHours(scopedEntries);
+  const totalHours = sumHours(entriesInPeriodCapped);
   const thisWeekHours = sumHours(thisWeekEntries);
   const todayHours = sumHours(todayEntries);
 
@@ -349,19 +408,26 @@ function App() {
   const latenessMetrics = (() => {
     let lateCount = 0;
     let shiftCount = 0;
-    for (const day of lastFiveWeekdays) {
-      const key = day.toISOString().slice(0, 10);
-      for (const u of scopedUsers) {
-        const dayEntries = scopedEntries.filter((e) => e.user === u.username && e.date === key);
-        if (!dayEntries.length) continue;
-        const first = dayEntries.sort((a, b) => new Date(a.clockIn) - new Date(b.clockIn))[0];
-        const s = scheduleForUser(u.username);
-        const scheduledStart = parseTimeOnDate(key, new Date(first.clockIn) < parseTimeOnDate(key, s.pmStart) ? s.amStart : s.pmStart);
-        const graceMs = (s.graceMin || 15) * 60000;
-        const lateMinutes = first.lateMinutes ?? Math.max(0, Math.floor((new Date(first.clockIn) - scheduledStart - graceMs) / 60000));
-        shiftCount += 1;
-        if (lateMinutes > 0) lateCount += 1;
-      }
+    const grouped = new Map();
+    for (const e of entriesInPeriodCapped) {
+      if (!e.user || !e.date || !e.clockIn) continue;
+      const key = `${e.user}::${e.date}`;
+      const list = grouped.get(key) || [];
+      list.push(e);
+      grouped.set(key, list);
+    }
+    for (const [key, list] of grouped.entries()) {
+      const [username, dateKey] = key.split("::");
+      const first = list.sort((a, b) => new Date(a.clockIn) - new Date(b.clockIn))[0];
+      const s = scheduleForUser(username);
+      const scheduledStart = parseTimeOnDate(
+        dateKey,
+        new Date(first.clockIn) < parseTimeOnDate(dateKey, s.pmStart) ? s.amStart : s.pmStart
+      );
+      const graceMs = (s.graceMin || 15) * 60000;
+      const lateMinutes = first.lateMinutes ?? Math.max(0, Math.floor((new Date(first.clockIn) - scheduledStart - graceMs) / 60000));
+      shiftCount += 1;
+      if (lateMinutes > 0) lateCount += 1;
     }
     const rate = shiftCount ? (lateCount / shiftCount) * 100 : 0;
     return { rate, shiftCount };
@@ -370,11 +436,16 @@ function App() {
   const attendanceMetrics = (() => {
     let expected = 0;
     let worked = 0;
-    for (const day of lastFiveWeekdays) {
+    const days = [];
+    for (let d = new Date(activeRange.start); d < activeRange.end; d.setDate(d.getDate() + 1)) {
+      if (d.getDay() === 0 || d.getDay() === 6) continue;
+      days.push(new Date(d));
+    }
+    for (const day of days) {
       const key = day.toISOString().slice(0, 10);
       for (const u of scopedUsers) {
         expected += expectedDailyHours(u.username);
-        const dayEntries = scopedEntries.filter((e) => e.user === u.username && e.date === key);
+        const dayEntries = entriesInPeriodCapped.filter((e) => e.user === u.username && e.date === key);
         worked += sumHours(dayEntries);
       }
     }
@@ -383,16 +454,84 @@ function App() {
   })();
 
   const averageWorkMetrics = (() => {
-    const total = sumHours(scopedEntries.filter((e) => {
-      const dt = new Date(e.date || e.clockIn);
-      return lastFiveWeekdays.some((d) => d.toISOString().slice(0, 10) === dt.toISOString().slice(0, 10));
-    }));
+    const total = sumHours(entriesInPeriodCapped);
     const count = scopedUsers.length || 1;
     return { hours: total / count };
   })();
 
   const saveEntries = (next) => {
     localStorage.setItem("tm_time_entries", JSON.stringify(next));
+  };
+
+  const seedRandomEntries = () => {
+    if (!users.length) return;
+    const targetUsers = scopedUsers.length ? scopedUsers : users;
+    const base = new Date();
+    const next = [];
+    const daysToGenerate = 365;
+    const randomMinutes = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+    const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+    const nextSchedules = { ...userSchedules };
+    const nextContracts = { ...userContracts };
+
+    for (const u of targetUsers) {
+      if (!u?.username) continue;
+      const amStart = `0${randomMinutes(8, 9)}`.slice(-2) + `:${pick(["00", "15", "30", "45"])}`;
+      const amEnd = `12:${pick(["00", "15", "30"])}`;
+      const pmStart = `13:${pick(["00", "15", "30", "45"])}`;
+      const pmEnd = `1${randomMinutes(7, 8)}`.slice(-2) + `:${pick(["00", "15", "30"])}`;
+      const graceMin = pick([10, 15, 20]);
+      nextSchedules[u.username] = { amStart, amEnd, pmStart, pmEnd, graceMin };
+      nextContracts[u.username] = pick(["CDI", "CDD", "Stage"]);
+    }
+
+    for (let i = 0; i < daysToGenerate; i += 1) {
+      const d = new Date(base);
+      d.setDate(d.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const day = d.getDay();
+      if (day === 0 || day === 6) continue;
+      const dateKey = d.toISOString().slice(0, 10);
+
+      for (const u of targetUsers) {
+        if (!u?.username) continue;
+        const sched = nextSchedules[u.username] || scheduleForUser(u.username);
+        const amStart = parseTimeOnDate(dateKey, sched.amStart);
+        const pmStart = parseTimeOnDate(dateKey, sched.pmStart);
+        const pmEnd = parseTimeOnDate(dateKey, sched.pmEnd);
+        const graceMin = sched.graceMin || 15;
+
+        const lateIn = randomMinutes(-5, 25);
+        const extraOut = randomMinutes(-10, 20);
+
+        const clockIn = new Date(amStart);
+        clockIn.setMinutes(clockIn.getMinutes() + lateIn);
+        const clockOut = new Date(pmEnd);
+        clockOut.setMinutes(clockOut.getMinutes() + extraOut);
+
+        const scheduledStart = clockIn < pmStart ? amStart : pmStart;
+        const lateMinutes = Math.max(
+          0,
+          Math.floor((clockIn.getTime() - (scheduledStart.getTime() + graceMin * 60000)) / 60000)
+        );
+
+        next.push({
+          id: `${u.username}-${dateKey}-${randomMinutes(1000, 9999)}`,
+          user: u.username,
+          team: u.team || teamByUser.get(u.username) || null,
+          date: dateKey,
+          clockIn: clockIn.toISOString(),
+          clockOut: clockOut.toISOString(),
+          scheduledStart: scheduledStart.toISOString(),
+          lateMinutes,
+        });
+      }
+    }
+
+    saveSchedules(nextSchedules);
+    saveContracts(nextContracts);
+    saveEntries(next);
+    window.location.reload();
   };
 
   const onClockIn = () => {
@@ -594,174 +733,6 @@ function App() {
     </form>
   );
 
-  const renderClockIn = () => (
-    <div style={{ marginTop: 20 }}>
-      <div style={{ padding: 12, borderRadius: 8, background: "#ecfdf3", color: "#065f46" }}>
-        Connecté.
-      </div>
-      <div style={{ marginTop: 12, fontSize: 14, color: "#374151" }}>
-        Rôles: {roles.length ? roles.join(", ") : "Aucun"} | Utilisateur: {currentDisplayName || currentUser || "—"} | Team: {currentTeam || "—"}
-      </div>
-      {clockError && (
-        <div style={{ marginTop: 12, color: "#b91c1c", fontSize: 13 }}>
-          {clockError}
-        </div>
-      )}
-
-      <div style={{ marginTop: 18, display: "flex", gap: 12 }}>
-        <button
-          onClick={() => navigate("/profile")}
-          style={{
-            border: "1px solid #e5e7eb",
-            padding: "8px 12px",
-            borderRadius: 8,
-            background: "#fff",
-            cursor: "pointer",
-          }}
-        >
-          Mon profil
-        </button>
-        {(isAdmin || isManager) && (
-          <button
-            onClick={() => navigate("/dashboard")}
-            style={{
-              border: "1px solid #e5e7eb",
-              padding: "8px 12px",
-              borderRadius: 8,
-              background: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            Dashboard manager
-          </button>
-        )}
-      </div>
-
-      <div style={{ marginTop: 18, position: "relative" }}>
-        <div
-          style={{
-            position: "sticky",
-            top: 0,
-            background: "#f4f6fb",
-            paddingBottom: 10,
-            zIndex: 1,
-          }}
-        >
-          <button
-            onClick={() => setShowClockModal(true)}
-            style={{
-              width: "100%",
-              border: "none",
-              padding: "12px",
-              borderRadius: 10,
-              background: "#2563eb",
-              color: "white",
-              cursor: "pointer",
-            }}
-          >
-            Pointer (Clock in / out)
-          </button>
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 13, color: "#6b7280" }}>
-            {new Date(now).toLocaleDateString("fr-FR", {
-              weekday: "long",
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            })}
-            {" · "}
-            {new Date(now).toLocaleTimeString("fr-FR")}
-          </div>
-        </div>
-
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 13, color: "#374151", marginBottom: 6 }}>Historique aujourd’hui</div>
-          {todayEntries.length ? (
-            todayEntries.map((e) => (
-              <div
-                key={e.id}
-                style={{
-                  padding: "8px 10px",
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 8,
-                  marginBottom: 6,
-                  fontSize: 13,
-                }}
-              >
-                Entrée: {new Date(e.clockIn).toLocaleTimeString("fr-FR")}
-                {e.clockOut ? ` · Sortie: ${new Date(e.clockOut).toLocaleTimeString("fr-FR")}` : " · En cours"}
-              </div>
-            ))
-          ) : (
-            <div style={{ fontSize: 13, color: "#6b7280" }}>Aucune entrée aujourd’hui.</div>
-          )}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 18 }}>
-        <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Mon dashboard</h3>
-        {currentUser ? (
-          <div
-            style={{
-              padding: "10px 12px",
-              border: "1px solid #e5e7eb",
-              borderRadius: 8,
-              background: "#f9fafb",
-            }}
-          >
-            Dashboard de {currentDisplayName || currentUser} {currentTeam ? `· ${currentTeam}` : ""}
-          </div>
-        ) : (
-          <div style={{ fontSize: 13, color: "#6b7280" }}>Utilisateur inconnu.</div>
-        )}
-      </div>
-
-      {(isAdmin || isManager) && (
-        <div style={{ marginTop: 18 }}>
-          <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Dashboards employés</h3>
-          {visibleDashboards.length ? (
-            <div>
-              {visibleDashboards.map((u) => (
-                <div
-                  key={u}
-                  style={{
-                    padding: "10px 12px",
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 8,
-                    marginBottom: 8,
-                    background: "#f9fafb",
-                  }}
-                >
-                  Dashboard de {(users.find((x) => x.username === u)?.displayName || u)} {teamByUser.get(u) ? `· ${teamByUser.get(u)}` : ""}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: "#6b7280" }}>Aucun dashboard visible pour ce rôle.</div>
-          )}
-        </div>
-      )}
-
-      <button
-        onClick={onLogout}
-        style={{
-          marginTop: 16,
-          width: "100%",
-          border: "none",
-          padding: "10px 12px",
-          borderRadius: 8,
-          background: "#ef4444",
-          color: "white",
-          cursor: "pointer",
-        }}
-      >
-        Se déconnecter
-      </button>
-    </div>
-  );
-
   const renderDashboard = () => (
     <div style={{ marginTop: 12 }}>
       <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -829,6 +800,64 @@ function App() {
         </div>
       </div>
 
+      <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        {[
+          { key: "week", label: "Semaine" },
+          { key: "month", label: "Mois" },
+          { key: "year", label: "Année" },
+        ].map((p) => {
+          const active = period === p.key;
+          return (
+            <button
+              key={p.key}
+              onClick={() => setPeriod(p.key)}
+              style={{
+                border: "1px solid #e5e7eb",
+                padding: "6px 12px",
+                borderRadius: 999,
+                background: active ? "#111827" : "#fff",
+                color: active ? "#fff" : "#111827",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+        <div style={{ marginLeft: 6, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="date"
+            value={rangeStart}
+            onChange={(e) => setRangeStart(e.target.value)}
+            style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}
+          />
+          <span style={{ fontSize: 12, color: "#6b7280" }}>à</span>
+          <input
+            type="date"
+            value={rangeEnd}
+            onChange={(e) => setRangeEnd(e.target.value)}
+            style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}
+          />
+          {(rangeStart || rangeEnd) && (
+            <button
+              onClick={() => { setRangeStart(""); setRangeEnd(""); }}
+              style={{
+                border: "1px solid #e5e7eb",
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: "#fff",
+                color: "#111827",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Réinitialiser
+            </button>
+          )}
+        </div>
+      </div>
+
       <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         <>
           <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb" }}>
@@ -844,7 +873,7 @@ function App() {
             </div>
             <div style={{ fontSize: 24, fontWeight: 600 }}>{formatHours(averageWorkMetrics.hours)}h</div>
             <div style={{ fontSize: 12, color: "#9ca3af" }}>
-              {isAdmin || isManager ? "Par collaborateur (5 jours)" : "Sur 5 jours"}
+              {isAdmin || isManager ? `Par collaborateur (${activeRange.label})` : `Sur ${activeRange.label}`}
             </div>
           </div>
           <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb" }}>
@@ -903,6 +932,20 @@ function App() {
             }}
           >
             Reset données
+          </button>
+        )}
+        {isAdmin && (
+          <button
+            onClick={seedRandomEntries}
+            style={{
+              border: "1px solid #e5e7eb",
+              padding: "8px 12px",
+              borderRadius: 8,
+              background: "#fff",
+              cursor: "pointer",
+            }}
+          >
+            Générer pointages
           </button>
         )}
         <button
@@ -1287,7 +1330,7 @@ function App() {
       <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Mon profil</h3>
       <div style={{ marginBottom: 12 }}>
         <button
-          onClick={() => (isAdmin || isManager ? navigate("/dashboard") : navigate("/clock-in"))}
+          onClick={() => navigate("/dashboard")}
           style={{
             border: "1px solid #e5e7eb",
             padding: "8px 12px",
@@ -1335,7 +1378,6 @@ function App() {
   let content = null;
   if (route === "/") content = renderLanding();
   else if (route === "/sign-in") content = renderLogin();
-  else if (route === "/clock-in") content = renderClockIn();
   else if (route === "/profile") content = renderProfile();
   else if (route === "/dashboard") content = renderDashboard();
   else if (route === "/dashboard/members") content = renderMembers();
