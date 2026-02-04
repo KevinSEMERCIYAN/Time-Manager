@@ -23,7 +23,13 @@ function App() {
   const [users, setUsers] = useState(
     (() => {
       try {
-        return JSON.parse(localStorage.getItem("tm_users") || "[]");
+        const raw = JSON.parse(localStorage.getItem("tm_users") || "[]");
+        return raw.map((u) => ({
+          ...u,
+          teams: Array.isArray(u?.teams)
+            ? u.teams
+            : (u?.team ? [u.team] : []),
+        }));
       } catch {
         return [];
       }
@@ -40,6 +46,10 @@ function App() {
   );
   const [showClockModal, setShowClockModal] = useState(false);
   const [clockError, setClockError] = useState("");
+  const [teamToDelete, setTeamToDelete] = useState(null);
+  const [teamToEdit, setTeamToEdit] = useState(null);
+  const [editTeamName, setEditTeamName] = useState("");
+  const [editTeamMembers, setEditTeamMembers] = useState([]);
   const [userSchedules, setUserSchedules] = useState(
     (() => {
       try {
@@ -139,14 +149,20 @@ function App() {
       localStorage.setItem("tm_team", data.team || "");
       localStorage.setItem("tm_display_name", data.displayName || "");
       localStorage.setItem("tm_teams", JSON.stringify(data.teams || []));
-      localStorage.setItem("tm_users", JSON.stringify(data.users || []));
+      const normalizedUsers = (data.users || []).map((u) => ({
+        ...u,
+        teams: Array.isArray(u.teams)
+          ? u.teams
+          : (u.team ? [u.team] : []),
+      }));
+      localStorage.setItem("tm_users", JSON.stringify(normalizedUsers));
       setToken(data.token);
       setRoles(data.roles || []);
       setCurrentUser(data.username || username);
       setCurrentTeam(data.team || "");
       setCurrentDisplayName(data.displayName || "");
       setTeams(data.teams || []);
-      setUsers(data.users || []);
+      setUsers(normalizedUsers);
       setPassword("");
       navigate("/dashboard");
     } catch (err) {
@@ -268,7 +284,7 @@ function App() {
   const scopedUsers = (() => {
     const base = users.length ? users : getUsersFallback();
     if (isAdmin) return base;
-    if (isManager) return base.filter((u) => u.team === currentTeam);
+    if (isManager) return base.filter((u) => (u.teams || []).includes(currentTeam));
     return base.filter((u) => u.username === currentUser);
   })();
 
@@ -632,8 +648,9 @@ function App() {
   const teamByUser = useMemo(() => {
     const map = new Map();
     for (const u of users) {
-      if (u.username && u.team && !map.has(u.username)) {
-        map.set(u.username, u.team);
+      const t = (u.teams || [u.team]).filter(Boolean);
+      if (u.username && t.length && !map.has(u.username)) {
+        map.set(u.username, t.join(", "));
       }
     }
     for (const e of entries) {
@@ -650,20 +667,117 @@ function App() {
   const allTeams = useMemo(() => {
     if (isManager && !isAdmin) return currentTeam ? [currentTeam] : [];
     const set = new Set(teams);
-    for (const u of users) if (u.team) set.add(u.team);
+    for (const u of users) {
+      for (const t of (u.teams || [u.team]).filter(Boolean)) set.add(t);
+    }
     for (const e of entries) if (e.team) set.add(e.team);
     return Array.from(set).filter(Boolean).sort();
   }, [teams, entries, users, isAdmin, isManager, currentTeam]);
 
   const visibleUsersForTeam = useMemo(() => {
-    if (isAdmin) return users;
-    if (isManager) return users.filter((u) => u.team === currentTeam);
+    const isEmployeeOnly = (u) => {
+      const rolesList = Array.isArray(u?.roles) ? u.roles : [];
+      if (!rolesList.length) return true;
+      return rolesList.includes("ROLE_EMPLOYEE")
+        && !rolesList.includes("ROLE_MANAGER")
+        && !rolesList.includes("ROLE_ADMIN");
+    };
+    if (isAdmin) return users.filter(isEmployeeOnly);
+    if (isManager) {
+      return users
+        .filter((u) => u.username !== currentUser)
+        .filter((u) => {
+          if (u?.team) return u.team === currentTeam;
+          const list = Array.isArray(u?.teams) ? u.teams : [];
+          return list.includes(currentTeam);
+        })
+        .filter(isEmployeeOnly);
+    }
     return [];
-  }, [users, isAdmin, isManager, currentTeam]);
+  }, [users, isAdmin, isManager, currentUser, currentTeam]);
 
   const saveCustomTeams = (next) => {
     localStorage.setItem("tm_custom_teams", JSON.stringify(next));
     setCustomTeams(next);
+  };
+
+  const saveUsers = (next) => {
+    const normalized = (next || []).map((u) => ({
+      ...u,
+      teams: Array.isArray(u?.teams)
+        ? u.teams
+        : (u?.team ? [u.team] : []),
+    }));
+    localStorage.setItem("tm_users", JSON.stringify(normalized));
+    setUsers(normalized);
+  };
+
+  const deleteTeam = (team) => {
+    if (!team) return;
+    setCustomTeams((prev) => {
+      const next = prev.filter((x) => {
+        if (team.id && x.id) return x.id !== team.id;
+        return !(x.name === team.name && (x.manager || "") === (team.manager || ""));
+      });
+      localStorage.setItem("tm_custom_teams", JSON.stringify(next));
+      return next;
+    });
+    if (users.length) {
+      const memberSet = new Set(team.members || []);
+      const updatedUsers = users.map((u) => {
+        if (!u?.username) return u;
+        const teamsList = Array.isArray(u.teams)
+          ? u.teams
+          : (u.team ? [u.team] : []);
+        if (memberSet.has(u.username) || teamsList.includes(team.name)) {
+          return { ...u, teams: teamsList.filter((t) => t !== team.name) };
+        }
+        return u;
+      });
+      saveUsers(updatedUsers);
+    }
+    setTeamToDelete(null);
+  };
+
+  const openEditTeam = (team) => {
+    setTeamToEdit(team);
+    setEditTeamName(team.name || "");
+    setEditTeamMembers(team.members || []);
+  };
+
+  const saveEditTeam = () => {
+    if (!teamToEdit) return;
+    const name = editTeamName.trim();
+    if (!name) return;
+    const prevName = teamToEdit.name;
+    const members = editTeamMembers;
+    const nextTeams = customTeams.map((t) => {
+      if (teamToEdit.id && t.id) {
+        return t.id === teamToEdit.id ? { ...t, name, members } : t;
+      }
+      return t.name === teamToEdit.name && t.manager === teamToEdit.manager
+        ? { ...t, name, members }
+        : t;
+    });
+    saveCustomTeams(nextTeams);
+
+    if (users.length) {
+      const memberSet = new Set(members);
+      const updatedUsers = users.map((u) => {
+        if (!u?.username) return u;
+        const teamsList = Array.isArray(u.teams)
+          ? u.teams
+          : (u.team ? [u.team] : []);
+        let nextList = teamsList.filter((t) => t !== prevName);
+        if (memberSet.has(u.username)) {
+          if (!nextList.includes(name)) nextList = [...nextList, name];
+        }
+        return { ...u, teams: nextList };
+      });
+      saveUsers(updatedUsers);
+    }
+
+    setTeamToEdit(null);
   };
 
   const renderLogin = () => (
@@ -987,11 +1101,15 @@ function App() {
           {(isAdmin
             ? users
             : users
-                .filter((u) => u.team === currentTeam)
                 .filter((u) => {
-                  const rolesList = u.roles || [];
+                  if (u?.team) return u.team === currentTeam;
+                  const list = Array.isArray(u?.teams) ? u.teams : [];
+                  return list.includes(currentTeam);
+                })
+                .filter((u) => {
+                  const rolesList = Array.isArray(u?.roles) ? u.roles : [];
                   if (!rolesList.length) return true;
-                  return rolesList.includes("ROLE_EMPLOYEE") && !rolesList.includes("ROLE_MANAGER") && !rolesList.includes("ROLE_ADMIN");
+                  return !rolesList.includes("ROLE_MANAGER") && !rolesList.includes("ROLE_ADMIN");
                 })
           ).map((u) => {
             const sched = userSchedules?.[u.username] || {};
@@ -1155,7 +1273,7 @@ function App() {
           </button>
         </div>
       )}
-      {allTeams.length ? (
+      {isAdmin && allTeams.length ? (
         <div>
           {allTeams.map((t) => (
             <div
@@ -1172,9 +1290,10 @@ function App() {
             </div>
           ))}
         </div>
-      ) : (
+      ) : null}
+      {isAdmin && !allTeams.length ? (
         <div style={{ fontSize: 13, color: "#6b7280" }}>Aucune équipe configurée.</div>
-      )}
+      ) : null}
       {customTeams
         .filter((t) => (isAdmin ? true : t.manager === currentUser))
         .length ? (
@@ -1184,7 +1303,7 @@ function App() {
             .filter((t) => (isAdmin ? true : t.manager === currentUser))
             .map((t) => (
             <div
-              key={`${t.name}-${t.manager}`}
+              key={t.id || `${t.name}-${t.manager}`}
               style={{
                 padding: "10px 12px",
                 border: "1px solid #e5e7eb",
@@ -1192,13 +1311,53 @@ function App() {
                 marginBottom: 8,
                 background: "#f9fafb",
                 fontSize: 13,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
               }}
             >
-              {t.name} · Manager: {t.managerDisplayName || t.manager}
+              <div>
+                {t.name} · Manager: {t.managerDisplayName || t.manager}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => openEditTeam(t)}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    background: "#fff",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  Modifier
+                </button>
+                <button
+                  onClick={() => {
+                    setTeamToDelete(t);
+                  }}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    background: "#fff",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  Supprimer
+                </button>
+              </div>
             </div>
           ))}
         </div>
-      ) : null}
+      ) : (
+        <div style={{ fontSize: 13, color: "#6b7280" }}>
+          {isAdmin ? "Aucune équipe personnalisée." : "Aucune équipe créée par vous."}
+        </div>
+      )}
     </div>
   );
 
@@ -1299,6 +1458,7 @@ function App() {
           const next = [
             ...customTeams,
             {
+              id: `${currentUser || "manager"}-${Date.now()}`,
               name,
               manager: currentUser || "",
               managerDisplayName: currentDisplayName || "",
@@ -1306,6 +1466,17 @@ function App() {
             },
           ];
           saveCustomTeams(next);
+          if (selectedMembers.length && users.length) {
+            const updatedUsers = users.map((u) =>
+              selectedMembers.includes(u.username)
+                ? {
+                  ...u,
+                  teams: Array.from(new Set([...(u.teams || (u.team ? [u.team] : [])), name])),
+                }
+                : u
+            );
+            saveUsers(updatedUsers);
+          }
           setNewTeamName("");
           setSelectedMembers([]);
           navigate("/dashboard/teams");
@@ -1499,6 +1670,173 @@ function App() {
             >
               Fermer
             </button>
+          </div>
+        </div>
+      )}
+
+      {teamToDelete && (
+        <div
+          onClick={() => setTeamToDelete(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              background: "#fff",
+              borderRadius: 12,
+              padding: 20,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 6px" }}>Confirmer la suppression</h3>
+            <div style={{ fontSize: 13, color: "#6b7280" }}>
+              Voulez-vous supprimer l’équipe <strong>{teamToDelete.name}</strong> ?
+            </div>
+            <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+              <button
+                onClick={() => setTeamToDelete(null)}
+                style={{
+                  flex: 1,
+                  border: "1px solid #e5e7eb",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                Annuler
+              </button>
+              <button
+                onClick={() => deleteTeam(teamToDelete)}
+                style={{
+                  flex: 1,
+                  border: "none",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "#ef4444",
+                  color: "white",
+                  cursor: "pointer",
+                }}
+              >
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {teamToEdit && (
+        <div
+          onClick={() => setTeamToEdit(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 520,
+              background: "#fff",
+              borderRadius: 12,
+              padding: 20,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 6px" }}>Modifier l’équipe</h3>
+            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
+              Manager: {teamToEdit.managerDisplayName || teamToEdit.manager}
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 6 }}>
+                Nom de l’équipe
+              </label>
+              <input
+                value={editTeamName}
+                onChange={(e) => setEditTeamName(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 6 }}>
+                Utilisateurs
+              </label>
+              <div style={{ display: "grid", gap: 8, maxHeight: 260, overflow: "auto" }}>
+                {visibleUsersForTeam
+                  .filter((u) => u.username && u.username !== currentUser)
+                  .map((u) => {
+                    const checked = editTeamMembers.includes(u.username);
+                    return (
+                      <label key={u.username} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...editTeamMembers, u.username]
+                              : editTeamMembers.filter((m) => m !== u.username);
+                            setEditTeamMembers(next);
+                          }}
+                        />
+                        <span style={{ fontSize: 13 }}>{u.displayName || u.username}</span>
+                      </label>
+                    );
+                  })}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => setTeamToEdit(null)}
+                style={{
+                  flex: 1,
+                  border: "1px solid #e5e7eb",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                Annuler
+              </button>
+              <button
+                onClick={saveEditTeam}
+                style={{
+                  flex: 1,
+                  border: "none",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "#2563eb",
+                  color: "white",
+                  cursor: "pointer",
+                }}
+              >
+                Enregistrer
+              </button>
+            </div>
           </div>
         </div>
       )}
