@@ -179,9 +179,7 @@ app.post("/auth/login", async (req, res) => {
           }))
           .map(({ dn: _dn, memberOf: _memberOf, ...rest }) => rest)
       : [];
-    const usersOut = isManager && !isAdmin && team
-      ? usersOutRaw.filter((u) => u.team === team)
-      : usersOutRaw;
+    const usersOut = usersOutRaw;
 
     const teamsOut = isAdmin ? teams : (team ? [team] : []);
 
