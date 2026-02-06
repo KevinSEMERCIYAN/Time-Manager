@@ -18,6 +18,8 @@ services:
   backend:
     build: ./backend
     environment:
+      DATABASE_URL: mysql://timemanager:timemanager@db:3306/timemanager
+      SHADOW_DATABASE_URL: mysql://root:root@db:3306/timemanager_shadow
       DB_HOST: db
       DB_PORT: "3306"
       DB_NAME: timemanager
@@ -26,16 +28,24 @@ services:
 
       LDAP_URL: ldaps://AD-01.primebank.local:636
       LDAP_BASE_DN: DC=primebank,DC=local
-      LDAP_BIND_DN: svc_ldap_reader@primebank.local
-      LDAP_BIND_PASSWORD: change-me
+      LDAP_BIND_DN: administrateur@primebank.local
+      LDAP_BIND_PASSWORD: "@Mxzu43v7!!!"
       LDAP_USER_FILTER: "(sAMAccountName={{username}})"
       LDAP_CA_CERT_PATH: /app/certs/primebank-root-ca.cer
       LDAP_TLS_SERVERNAME: AD-01.primebank.local
       LDAP_DIRECT_BIND: "true"
       LDAP_UPN_DOMAIN: primebank.local
+      AD_DERIVE_TEAM: "false"
+      LDAP_USERS_BASE_DN: "OU=Utilisateurs,DC=primebank,DC=local"
+      LDAP_USERS_FILTER: "(&(objectClass=user)(!(objectClass=computer)))"
+      LDAP_SYNC_EXCLUDE_USERS: "svc_timemanager,svc_ldap_reader"
+      AD_SYNC_ENABLED: "true"
+      AD_SYNC_INTERVAL_MINUTES: "2"
 
-      JWT_SECRET: change-me
+      JWT_SECRET: "@Mxzu43v7!!!"
       JWT_TTL_MINUTES: "15"
+      REFRESH_TTL_DAYS: "14"
+      COOKIE_SECURE: "false"
 
       MAIL_HOST: mailpit
       MAIL_PORT: "1025"
@@ -72,4 +82,3 @@ services:
 
 volumes:
   db-data:
-
