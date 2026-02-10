@@ -119,7 +119,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (route === "/dashboard/members/create") {
+    if (route === "/members/create") {
       setCreateSearch("");
       setCreateUserId("");
       setCreateContract("");
@@ -140,9 +140,9 @@ function App() {
     const isProtected =
       route === "/profile" ||
       route === "/dashboard" ||
-      route.startsWith("/dashboard/members") ||
-      route === "/dashboard/teams" ||
-      route === "/dashboard/teams/createteam";
+      route.startsWith("/members") ||
+      route === "/teams" ||
+      route === "/teams/createteam";
 
     if (isProtected && !user && !authLoading) {
       navigate("/sign-in");
@@ -396,7 +396,7 @@ function App() {
       setAssignNow(false);
       setCreateTeamId("");
       await loadUsers();
-      navigate("/dashboard/members");
+      navigate("/members");
     } catch (err) {
       setError(err.message);
     }
@@ -408,8 +408,8 @@ function App() {
       await apiFetch(`/users/${target.id}`, { method: "DELETE" });
       setUserToDelete(null);
       await loadUsers();
-      if (route.startsWith("/dashboard/members/")) {
-        navigate("/dashboard/members");
+      if (route.startsWith("/members/")) {
+        navigate("/members");
       }
     } catch (err) {
       setError(err.message);
@@ -468,7 +468,7 @@ function App() {
       setNewTeamDescription("");
       setSelectedMembers([]);
       setSelectedManagerId("");
-      navigate("/dashboard/teams");
+      navigate("/teams");
       await loadTeams();
     } catch (err) {
       setError(err.message);
@@ -538,7 +538,7 @@ function App() {
           </button>
           {(isAdmin || isManager) && (
             <button
-              onClick={() => navigate("/dashboard/teams")}
+            onClick={() => navigate("/teams")}
               style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
             >
               Gestion teams
@@ -546,7 +546,7 @@ function App() {
           )}
           {(isAdmin || isManager) && (
             <button
-              onClick={() => navigate("/dashboard/members")}
+            onClick={() => navigate("/members")}
               style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
             >
               Gestion employés
@@ -832,7 +832,7 @@ function App() {
       <div style={{ marginBottom: 12 }}>
         {(isAdmin || isManager) && (
           <button
-            onClick={() => navigate("/dashboard/members/create")}
+            onClick={() => navigate("/members/create")}
             style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#2563eb", color: "white" }}
           >
             Créer un utilisateur
@@ -853,7 +853,7 @@ function App() {
             .map((u) => (
               <button
                 key={u.id}
-                onClick={() => navigate(`/dashboard/members/${u.id}`)}
+                onClick={() => navigate(`/members/${u.id}`)}
                 style={{
                   padding: "10px 12px",
                   border: "1px solid #e5e7eb",
@@ -1205,7 +1205,7 @@ function App() {
       {(isAdmin || isManager) && (
         <div style={{ marginBottom: 12 }}>
           <button
-            onClick={() => navigate("/dashboard/teams/createteam")}
+            onClick={() => navigate("/teams/createteam")}
             style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#2563eb", color: "white" }}
           >
             Créer une équipe
@@ -1557,11 +1557,11 @@ function App() {
   else if (route === "/sign-in") content = renderLogin();
   else if (route === "/dashboard") content = renderDashboard();
   else if (route === "/profile") content = renderDashboardShell(renderProfile(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
-  else if (route === "/dashboard/members") content = renderDashboardShell(renderMembers(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
-  else if (route === "/dashboard/members/create") content = renderDashboardShell(renderMemberCreate(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
-  else if (route.startsWith("/dashboard/members/")) content = renderDashboardShell(renderMemberDetails(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
-  else if (route === "/dashboard/teams") content = renderDashboardShell(renderTeams(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
-  else if (route === "/dashboard/teams/createteam") content = renderDashboardShell(renderCreateTeam(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route === "/members") content = renderDashboardShell(renderMembers(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route === "/members/create") content = renderDashboardShell(renderMemberCreate(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route.startsWith("/members/")) content = renderDashboardShell(renderMemberDetails(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route === "/teams") content = renderDashboardShell(renderTeams(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route === "/teams/createteam") content = renderDashboardShell(renderCreateTeam(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
   else content = renderLanding();
 
   const isWideLayout = route === "/sign-in" || route === "/";
