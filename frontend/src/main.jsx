@@ -46,11 +46,17 @@ function App() {
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [report, setReport] = useState(null);
+  const [teamReport, setTeamReport] = useState(null);
+  const [userReport, setUserReport] = useState(null);
+  const [reportTeamId, setReportTeamId] = useState("");
+  const [reportUserId, setReportUserId] = useState("");
   const [teamToDelete, setTeamToDelete] = useState(null);
   const [teamToEdit, setTeamToEdit] = useState(null);
   const [editTeamName, setEditTeamName] = useState("");
   const [editTeamMembers, setEditTeamMembers] = useState([]);
+  const [editTeamDescription, setEditTeamDescription] = useState("");
   const [newTeamName, setNewTeamName] = useState("");
+  const [newTeamDescription, setNewTeamDescription] = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
   const [selectedManagerId, setSelectedManagerId] = useState("");
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
@@ -60,6 +66,8 @@ function App() {
   const [createSearch, setCreateSearch] = useState("");
   const [createUserId, setCreateUserId] = useState("");
   const [createContract, setCreateContract] = useState("");
+  const [createEmail, setCreateEmail] = useState("");
+  const [createPhone, setCreatePhone] = useState("");
   const [createSchedule, setCreateSchedule] = useState({
     amStart: "",
     amEnd: "",
@@ -69,7 +77,6 @@ function App() {
   const [assignNow, setAssignNow] = useState(false);
   const [createTeamId, setCreateTeamId] = useState("");
   const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
-  const [showProvisioned, setShowProvisioned] = useState(true);
 
   const splitDisplayName = (name) => {
     const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -110,6 +117,19 @@ function App() {
   useEffect(() => {
     loadSession();
   }, []);
+
+  useEffect(() => {
+    if (route === "/dashboard/members/create") {
+      setCreateSearch("");
+      setCreateUserId("");
+      setCreateContract("");
+      setCreateEmail("");
+      setCreatePhone("");
+      setCreateSchedule({ amStart: "", amEnd: "", pmStart: "", pmEnd: "" });
+      setAssignNow(false);
+      setCreateTeamId("");
+    }
+  }, [route]);
 
   useEffect(() => {
     if (route === "/clock-in") {
@@ -174,6 +194,26 @@ function App() {
     try {
       const data = await apiFetch(`/reports?from=${from}&to=${to}`);
       setReport({ ...data.summary, from, to });
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const loadTeamReport = async () => {
+    if (!reportTeamId || !report?.from || !report?.to) return;
+    try {
+      const data = await apiFetch(`/reports/team?from=${report.from}&to=${report.to}&teamId=${reportTeamId}`);
+      setTeamReport(data);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const loadUserReport = async () => {
+    if (!reportUserId || !report?.from || !report?.to) return;
+    try {
+      const data = await apiFetch(`/reports/user?from=${report.from}&to=${report.to}&userId=${reportUserId}`);
+      setUserReport(data);
     } catch (err) {
       setError(err.message);
     }
@@ -330,10 +370,15 @@ function App() {
   const provisionUser = async () => {
     if (!createUserId) return;
     try {
+      const selected = users.find((u) => u.id === createUserId);
       await apiFetch(`/users/${createUserId}/provision`, {
         method: "POST",
         body: JSON.stringify({
           contractType: createContract || null,
+          firstName: selected?.firstName || splitDisplayName(selected?.displayName).firstName || null,
+          lastName: selected?.lastName || splitDisplayName(selected?.displayName).lastName || null,
+          email: createEmail || null,
+          phone: createPhone || null,
           schedule: {
             amStart: createSchedule.amStart || null,
             amEnd: createSchedule.amEnd || null,
@@ -345,6 +390,8 @@ function App() {
       });
       setCreateUserId("");
       setCreateContract("");
+      setCreateEmail("");
+      setCreatePhone("");
       setCreateSchedule({ amStart: "", amEnd: "", pmStart: "", pmEnd: "" });
       setAssignNow(false);
       setCreateTeamId("");
@@ -373,6 +420,7 @@ function App() {
     setTeamToEdit(team);
     setEditTeamName(team.name || "");
     setEditTeamMembers((team.members || []).map((m) => m.userId));
+    setEditTeamDescription(team.description || "");
   };
 
   const saveEditTeam = async () => {
@@ -382,6 +430,7 @@ function App() {
         method: "PUT",
         body: JSON.stringify({
           name: editTeamName,
+          description: editTeamDescription,
           memberIds: editTeamMembers,
         }),
       });
@@ -410,11 +459,13 @@ function App() {
         method: "POST",
         body: JSON.stringify({
           name,
+          description: newTeamDescription || null,
           memberIds: selectedMembers,
           managerUserId: isAdmin ? (selectedManagerId || null) : null,
         }),
       });
       setNewTeamName("");
+      setNewTeamDescription("");
       setSelectedMembers([]);
       setSelectedManagerId("");
       navigate("/dashboard/teams");
@@ -469,28 +520,21 @@ function App() {
     </form>
   );
 
-  const renderDashboard = () => (
+  const renderDashboardShell = (body, footerLeft = null, footerRight = null, options = {}) => (
     <div style={{ marginTop: 12 }}>
-      <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 12, color: "#6b7280" }}>Utilisateur</div>
-          <div style={{ fontSize: 20, fontWeight: 600 }}>{user?.displayName || user?.username}</div>
-          <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
-            Rôles: {roles.length ? roles.join(", ") : "Aucun"}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <button
+            onClick={() => navigate("/dashboard")}
+            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
+          >
+            Dashboard
+          </button>
           <button
             onClick={() => navigate("/profile")}
             style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
           >
             Mon profil
-          </button>
-          <button
-            onClick={() => setShowClockModal(true)}
-            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#111827", color: "white" }}
-          >
-            Pointage
           </button>
           {(isAdmin || isManager) && (
             <button
@@ -509,69 +553,118 @@ function App() {
             </button>
           )}
         </div>
+
+        {options.showUserPanel && (
+          <div style={{ display: "grid", gap: 8, justifyItems: "end", textAlign: "right", marginTop: -6, marginRight: -4 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "#6b7280" }}>Utilisateur</div>
+              <div style={{ fontSize: 20, fontWeight: 600 }}>{user?.displayName || user?.username}</div>
+              <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280" }}>
+                Rôles: {roles.length ? roles.join(", ") : "Aucun"}
+              </div>
+            </div>
+            <button
+              onClick={() => setShowClockModal(true)}
+              style={{ border: "1px solid #e5e7eb", padding: "8px 14px", borderRadius: 8, background: "#111827", color: "white" }}
+            >
+              Pointage
+            </button>
+          </div>
+        )}
       </div>
 
-      <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        {[
-          { key: "week", label: "Semaine" },
-          { key: "month", label: "Mois" },
-          { key: "year", label: "Année" },
-        ].map((p) => {
-          const active = period === p.key;
-          return (
+      <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+        {options.showFilters ? (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            {[
+              { key: "week", label: "Semaine" },
+              { key: "month", label: "Mois" },
+              { key: "year", label: "Année" },
+            ].map((p) => {
+              const active = period === p.key;
+              return (
+                <button
+                  key={p.key}
+                  onClick={() => setPeriod(p.key)}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    padding: "6px 12px",
+                    borderRadius: 999,
+                    background: active ? "#111827" : "#fff",
+                    color: active ? "#fff" : "#111827",
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+            <div style={{ marginLeft: 6, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                type="date"
+                value={rangeStart}
+                onChange={(e) => setRangeStart(e.target.value)}
+                style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}
+              />
+              <span style={{ fontSize: 12, color: "#6b7280" }}>à</span>
+              <input
+                type="date"
+                value={rangeEnd}
+                onChange={(e) => setRangeEnd(e.target.value)}
+                style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}
+              />
+              {(rangeStart || rangeEnd) && (
+                <button
+                  onClick={() => {
+                    setRangeStart("");
+                    setRangeEnd("");
+                  }}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    background: "#fff",
+                    color: "#111827",
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  Réinitialiser
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div />
+        )}
+
+        <div />
+      </div>
+
+      {body}
+
+      <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {footerLeft}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {footerRight}
+          {options.showLogoutFooter !== false && (
             <button
-              key={p.key}
-              onClick={() => setPeriod(p.key)}
-              style={{
-                border: "1px solid #e5e7eb",
-                padding: "6px 12px",
-                borderRadius: 999,
-                background: active ? "#111827" : "#fff",
-                color: active ? "#fff" : "#111827",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
+              onClick={onLogout}
+              style={{ border: "none", padding: "8px 12px", borderRadius: 8, background: "#ef4444", color: "white" }}
             >
-              {p.label}
-            </button>
-          );
-        })}
-        <div style={{ marginLeft: 6, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <input
-            type="date"
-            value={rangeStart}
-            onChange={(e) => setRangeStart(e.target.value)}
-            style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}
-          />
-          <span style={{ fontSize: 12, color: "#6b7280" }}>à</span>
-          <input
-            type="date"
-            value={rangeEnd}
-            onChange={(e) => setRangeEnd(e.target.value)}
-            style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}
-          />
-          {(rangeStart || rangeEnd) && (
-            <button
-              onClick={() => {
-                setRangeStart("");
-                setRangeEnd("");
-              }}
-              style={{
-                border: "1px solid #e5e7eb",
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: "#fff",
-                color: "#111827",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
-              Réinitialiser
+              Se déconnecter
             </button>
           )}
         </div>
       </div>
+    </div>
+  );
 
+  const renderDashboard = () => renderDashboardShell(
+    <>
       <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
         <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb" }}>
           <div style={{ fontSize: 12, color: "#6b7280" }}>
@@ -604,61 +697,143 @@ function App() {
         </div>
       </div>
 
-      <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
+      {(isAdmin || isManager) && (
+        <div style={{ marginTop: 18, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+          <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb" }}>
+            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Reporting équipe (daily/weekly)</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                value={reportTeamId}
+                onChange={(e) => setReportTeamId(e.target.value)}
+                style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #d1d5db", minWidth: 200 }}
+              >
+                <option value="">Sélectionner équipe...</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={loadTeamReport}
+                style={{ border: "1px solid #e5e7eb", padding: "6px 10px", borderRadius: 8, background: "#111827", color: "white" }}
+              >
+                Charger
+              </button>
+            </div>
+            {teamReport && (
+              <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+                <div><strong>Daily</strong></div>
+                {Object.entries(teamReport.daily || {}).map(([k, v]) => (
+                  <div key={k}>{k}: {(v / 60).toFixed(2)}h</div>
+                ))}
+                <div style={{ marginTop: 6 }}><strong>Weekly</strong></div>
+                {Object.entries(teamReport.weekly || {}).map(([k, v]) => (
+                  <div key={k}>{k}: {(v / 60).toFixed(2)}h</div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb" }}>
+            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Reporting employé (daily/weekly)</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                value={reportUserId}
+                onChange={(e) => setReportUserId(e.target.value)}
+                style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #d1d5db", minWidth: 200 }}
+              >
+                <option value="">Sélectionner utilisateur...</option>
+                {users
+                  .filter((u) => u.isProvisioned)
+                  .filter((u) => {
+                    if (isAdmin) {
+                      const rolesList = Array.isArray(u?.roles) ? u.roles : [];
+                      return rolesList.includes("EMPLOYEE") || rolesList.includes("MANAGER");
+                    }
+                    return !Array.isArray(u?.roles) || u.roles.includes("EMPLOYEE");
+                  })
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>{u.displayName || u.username}</option>
+                  ))}
+              </select>
+              <button
+                onClick={loadUserReport}
+                style={{ border: "1px solid #e5e7eb", padding: "6px 10px", borderRadius: 8, background: "#111827", color: "white" }}
+              >
+                Charger
+              </button>
+            </div>
+            {userReport && (
+              <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, border: "1px solid #e5e7eb" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #e5e7eb", width: 90 }}>Type</th>
+                      <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>Période</th>
+                      <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #e5e7eb", width: 90 }}>Heures</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(userReport.daily || {}).map(([k, v]) => (
+                      <tr key={`d-${k}`}>
+                        <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>Daily</td>
+                        <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>{k}</td>
+                        <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>{(v / 60).toFixed(2)}h</td>
+                      </tr>
+                    ))}
+                    {Object.entries(userReport.weekly || {}).map(([k, v]) => (
+                      <tr key={`w-${k}`}>
+                        <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>Weekly</td>
+                        <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>{k}</td>
+                        <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>{(v / 60).toFixed(2)}h</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>,
+    isAdmin ? (
+      <>
         <button
-          onClick={exportCsv}
+          onClick={syncAdUsers}
           style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
         >
-          Exporter CSV
+          Sync AD
         </button>
-        {isAdmin && (
-          <button
-            onClick={syncAdUsers}
-            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-          >
-            Sync AD
-          </button>
-        )}
-        {isAdmin && (
-          <button
-            onClick={resetData}
-            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-          >
-            Reset données
-          </button>
-        )}
-        {isAdmin && (
-          <button
-            onClick={seedData}
-            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-          >
-            Générer pointages
-          </button>
-        )}
         <button
-          onClick={onLogout}
-          style={{ border: "none", padding: "8px 12px", borderRadius: 8, background: "#ef4444", color: "white" }}
+          onClick={resetData}
+          style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
         >
-          Se déconnecter
+          Reset données
         </button>
-      </div>
-    </div>
+        <button
+          onClick={seedData}
+          style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
+        >
+          Générer pointages
+        </button>
+      </>
+    ) : null,
+    <button
+      onClick={exportCsv}
+      style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
+    >
+      Exporter CSV
+    </button>,
+    { showFilters: true, showUserPanel: true }
   );
 
   const renderMembers = () => (
     <div style={{ marginTop: 20 }}>
       <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Gestion Employees</h3>
       <div style={{ marginBottom: 12 }}>
-        <button
-          onClick={() => navigate("/dashboard")}
-          style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-        >
-          Retour dashboard
-        </button>
         {(isAdmin || isManager) && (
           <button
             onClick={() => navigate("/dashboard/members/create")}
-            style={{ marginLeft: 8, border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#2563eb", color: "white" }}
+            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#2563eb", color: "white" }}
           >
             Créer un utilisateur
           </button>
@@ -702,28 +877,20 @@ function App() {
   const renderMemberCreate = () => {
     const candidates = users
       .filter((u) => u.isActive !== false || u.isDeleted)
-      .filter((u) => (showProvisioned ? true : !u.isProvisioned));
+      .filter((u) => !u.isProvisioned || u.isDeleted);
     const filtered = candidates.filter((u) => {
       const label = `${u.displayName || ""} ${u.username || ""}`.toLowerCase();
       return label.includes(createSearch.toLowerCase());
     });
     const selected = users.find((u) => u.id === createUserId);
-
-    useEffect(() => {
-      setCreateSearch("");
-      setCreateUserId("");
-    }, []);
+    const selectedName = splitDisplayName(selected?.displayName);
+    const selectedFirstName = selected?.firstName || selectedName.firstName;
+    const selectedLastName = selected?.lastName || selectedName.lastName;
 
     return (
       <div style={{ marginTop: 20 }}>
         <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Créer un utilisateur</h3>
         <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            onClick={() => navigate("/dashboard/members")}
-            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-          >
-            Retour employés
-          </button>
           <button
             onClick={provisionUser}
             disabled={!createUserId}
@@ -741,6 +908,8 @@ function App() {
               onChange={(e) => {
                 setCreateSearch(e.target.value);
                 setCreateUserId("");
+                setCreateEmail("");
+                setCreatePhone("");
                 setCreateDropdownOpen(true);
               }}
               onFocus={() => setCreateDropdownOpen(true)}
@@ -774,6 +943,8 @@ function App() {
                       onClick={() => {
                         setCreateUserId(u.id);
                         setCreateSearch(`${u.displayName || u.username} (${u.username})`);
+                        setCreateEmail(u.email || "");
+                        setCreatePhone(u.phone || "");
                         setCreateDropdownOpen(false);
                       }}
                       style={{
@@ -798,22 +969,11 @@ function App() {
             )}
           </div>
 
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={showProvisioned}
-                onChange={(e) => setShowProvisioned(e.target.checked)}
-              />
-              <span style={{ fontSize: 13 }}>Afficher déjà provisionnés</span>
-            </label>
-          </div>
-
           <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, maxWidth: 520 }}>
             <div>
               <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Prénom</div>
               <input
-                value={splitDisplayName(selected?.displayName).firstName}
+                value={selectedFirstName}
                 readOnly
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#f9fafb" }}
               />
@@ -821,9 +981,28 @@ function App() {
             <div>
               <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Nom</div>
               <input
-                value={splitDisplayName(selected?.displayName).lastName}
+                value={selectedLastName}
                 readOnly
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#f9fafb" }}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, maxWidth: 520 }}>
+            <div>
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Email</div>
+              <input
+                value={createEmail}
+                onChange={(e) => setCreateEmail(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Téléphone</div>
+              <input
+                value={createPhone}
+                onChange={(e) => setCreatePhone(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
               />
             </div>
           </div>
@@ -916,14 +1095,7 @@ function App() {
       return (
         <div style={{ marginTop: 20 }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Détail employé</h3>
-          <div style={{ marginBottom: 12 }}>
-            <button
-              onClick={() => navigate("/dashboard/members")}
-              style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-            >
-              Retour employés
-            </button>
-          </div>
+        <div style={{ marginBottom: 12 }} />
           <div style={{ fontSize: 13, color: "#6b7280" }}>Utilisateur introuvable.</div>
         </div>
       );
@@ -933,12 +1105,6 @@ function App() {
       <div style={{ marginTop: 20 }}>
         <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Détail employé</h3>
         <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            onClick={() => navigate("/dashboard/members")}
-            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-          >
-            Retour employés
-          </button>
           <button
             onClick={saveUsers}
             style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#111827", color: "white" }}
@@ -1036,14 +1202,6 @@ function App() {
   const renderTeams = () => (
     <div style={{ marginTop: 20 }}>
       <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Gestion Teams</h3>
-      <div style={{ marginBottom: 12 }}>
-        <button
-          onClick={() => navigate("/dashboard")}
-          style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-        >
-          Retour dashboard
-        </button>
-      </div>
       {(isAdmin || isManager) && (
         <div style={{ marginBottom: 12 }}>
           <button
@@ -1099,14 +1257,6 @@ function App() {
   const renderCreateTeam = () => (
     <div style={{ marginTop: 20 }}>
       <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Créer une équipe</h3>
-      <div style={{ marginBottom: 12 }}>
-        <button
-          onClick={() => navigate("/dashboard/teams")}
-          style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
-        >
-          Retour équipes
-        </button>
-      </div>
 
       <div style={{ marginBottom: 12 }}>
         <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Nom de l’équipe</label>
@@ -1114,6 +1264,14 @@ function App() {
           value={newTeamName}
           onChange={(e) => setNewTeamName(e.target.value)}
           required
+          style={{ width: "100%", maxWidth: 520, padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db" }}
+        />
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Description</label>
+        <input
+          value={newTeamDescription}
+          onChange={(e) => setNewTeamDescription(e.target.value)}
           style={{ width: "100%", maxWidth: 520, padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db" }}
         />
       </div>
@@ -1275,16 +1433,102 @@ function App() {
   const renderProfile = () => (
     <div style={{ marginTop: 20 }}>
       <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Mon profil</h3>
-      <div style={{ marginBottom: 12 }}>
+      <div style={{ padding: "10px 12px", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+        <div style={{ maxWidth: 420, margin: "0 auto" }}>
+        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Nom</div>
+        <input
+          value={user?.lastName || splitDisplayName(user?.displayName).lastName || ""}
+          readOnly
+          disabled
+          style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db", marginBottom: 8, background: "#f9fafb", color: "#6b7280" }}
+        />
+        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Prénom</div>
+        <input
+          value={user?.firstName || splitDisplayName(user?.displayName).firstName || ""}
+          readOnly
+          disabled
+          style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db", marginBottom: 8, background: "#f9fafb", color: "#6b7280" }}
+        />
+        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Email</div>
+        <input
+          value={user?.email || ""}
+          onChange={(e) => setUser({ ...user, email: e.target.value })}
+          style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db", marginBottom: 8 }}
+        />
+        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Téléphone</div>
+        <input
+          value={user?.phone || ""}
+          onChange={(e) => setUser({ ...user, phone: e.target.value })}
+          style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
+        />
+        </div>
+      </div>
+      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
-          onClick={() => navigate("/dashboard")}
+          onClick={async () => {
+            try {
+              const data = await apiFetch("/me", { method: "PUT", body: JSON.stringify(user) });
+              setUser(data.user);
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
+          style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#111827", color: "white" }}
+        >
+          Enregistrer
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              const data = await apiFetch("/gdpr/export");
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "timemanager-export.json";
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch (err) {
+              setError(err.message);
+            }
+          }}
           style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff" }}
         >
-          Retour
+          Exporter mes données
         </button>
-      </div>
-      <div style={{ padding: "10px 12px", border: "1px solid #e5e7eb", borderRadius: 8 }}>
-        Utilisateur: {user?.displayName || user?.username || "—"}
+        {isAdmin && (
+          <>
+            <button
+              onClick={async () => {
+                try {
+                  await apiFetch("/me", { method: "DELETE" });
+                  setUser(null);
+                  navigate("/sign-in");
+                } catch (err) {
+                  setError(err.message);
+                }
+              }}
+              style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fee2e2", color: "#991b1b" }}
+            >
+              Supprimer mon compte
+            </button>
+            <button
+              onClick={async () => {
+                if (!window.confirm("Confirmer l’anonymisation de votre compte ?")) return;
+                try {
+                  await apiFetch("/gdpr/anonymize", { method: "POST" });
+                  setUser(null);
+                  navigate("/sign-in");
+                } catch (err) {
+                  setError(err.message);
+                }
+              }}
+              style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fff5f5", color: "#b91c1c" }}
+            >
+              Anonymiser mon compte
+            </button>
+          </>
+        )}
       </div>
       <div style={{ marginTop: 12 }}>
         <div style={{ fontSize: 13, color: "#6b7280" }}>
@@ -1311,26 +1555,26 @@ function App() {
   let content = null;
   if (route === "/") content = renderLanding();
   else if (route === "/sign-in") content = renderLogin();
-  else if (route === "/profile") content = renderProfile();
   else if (route === "/dashboard") content = renderDashboard();
-  else if (route === "/dashboard/members") content = renderMembers();
-  else if (route === "/dashboard/members/create") content = renderMemberCreate();
-  else if (route.startsWith("/dashboard/members/")) content = renderMemberDetails();
-  else if (route === "/dashboard/teams") content = renderTeams();
-  else if (route === "/dashboard/teams/createteam") content = renderCreateTeam();
+  else if (route === "/profile") content = renderDashboardShell(renderProfile(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route === "/dashboard/members") content = renderDashboardShell(renderMembers(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route === "/dashboard/members/create") content = renderDashboardShell(renderMemberCreate(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route.startsWith("/dashboard/members/")) content = renderDashboardShell(renderMemberDetails(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route === "/dashboard/teams") content = renderDashboardShell(renderTeams(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
+  else if (route === "/dashboard/teams/createteam") content = renderDashboardShell(renderCreateTeam(), null, null, { showFilters: false, showUserPanel: false, showLogoutFooter: false });
   else content = renderLanding();
 
-  const isWideLayout = route.startsWith("/dashboard");
+  const isWideLayout = route === "/sign-in" || route === "/";
 
   return (
     <div style={{ minHeight: "100vh", background: "#f4f6fb", padding: 24, fontFamily: "Arial, sans-serif" }}>
       <div
         style={{
-          maxWidth: isWideLayout ? 1100 : 620,
-          margin: isWideLayout ? "40px auto" : "80px auto",
+          maxWidth: isWideLayout ? 620 : 1100,
+          margin: isWideLayout ? "80px auto" : "40px auto",
           background: "white",
           borderRadius: 12,
-          padding: isWideLayout ? 28 : "28px 36px",
+          padding: isWideLayout ? "28px 36px" : 28,
           boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
         }}
       >
@@ -1423,6 +1667,14 @@ function App() {
               <input
                 value={editTeamName}
                 onChange={(e) => setEditTeamName(e.target.value)}
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db" }}
+              />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 6 }}>Description</label>
+              <input
+                value={editTeamDescription}
+                onChange={(e) => setEditTeamDescription(e.target.value)}
                 style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db" }}
               />
             </div>

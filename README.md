@@ -224,3 +224,38 @@ Production :
 📄 Licence
 
 À définir.
+
+---
+
+## ✅ Compléments techniques
+
+### Champs utilisateur
+- `firstName`, `lastName`, `email`, `phone`
+
+### Champs équipe
+- `description`
+
+### GDPR
+- `GET /gdpr/export`
+- `POST /gdpr/anonymize`
+
+### Tests
+```bash
+cd backend
+npm run test
+npm run test:coverage
+```
+
+### CI/CD
+- `.github/workflows/ci.yml`
+
+### ADRs
+- `docs/adr/0001-architecture.md`
+- `docs/adr/0002-api-design.md`
+- `docs/adr/0003-reverse-proxy.md`
+- `docs/adr/0004-tech-stack.md`
+
+### Prod
+- `compose.prod.yml`
+- `nginx/conf.d/app.prod.conf`
+- Certificats TLS dans `./certs`

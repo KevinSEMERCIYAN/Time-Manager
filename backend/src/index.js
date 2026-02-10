@@ -60,6 +60,13 @@ const signAccessToken = (user) => {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: ttl });
 };
 
+const splitDisplayName = (name) => {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { firstName: null, lastName: null };
+  if (parts.length === 1) return { firstName: parts[0], lastName: null };
+  return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+};
+
 const createRefreshToken = () => crypto.randomBytes(48).toString("hex");
 
 const setAuthCookies = (res, accessToken, refreshToken) => {
@@ -183,6 +190,9 @@ const canAccessUser = async (actor, userId) => {
   if (!target || target.isDeleted) return false;
   if (actor.id === userId) return true;
   if (!isManager(actor)) return false;
+  if (Array.isArray(target.roles) && target.roles.includes("EMPLOYEE") && target.isProvisioned) {
+    return true;
+  }
   const managerTeamIds = await getManagerTeamIds(actor.id);
   if (!managerTeamIds.length) return false;
   const membership = await prisma.teamMember.findFirst({
@@ -199,20 +209,36 @@ const isManagerOfTeam = async (actor, teamId) => {
 };
 
 const listAccessibleUsers = async (actor) => {
+  const loadEmployees = async () => {
+    const all = await prisma.user.findMany({
+      where: { isDeleted: false },
+      orderBy: { displayName: "asc" },
+    });
+    return all.filter((u) => Array.isArray(u.roles) && u.roles.includes("EMPLOYEE"));
+  };
+
   if (isAdmin(actor)) {
     return prisma.user.findMany({ orderBy: { displayName: "asc" } });
   }
   if (isManager(actor)) {
     const teamIds = await getManagerTeamIds(actor.id);
     if (!teamIds.length) {
+      const employees = await loadEmployees();
       const self = await prisma.user.findUnique({ where: { id: actor.id } });
-      return self && !self.isDeleted ? [self] : [];
+      if (self && !self.isDeleted) {
+        const exists = employees.find((u) => u.id === self.id);
+        if (!exists) employees.unshift(self);
+      }
+      return employees;
     }
     const members = await prisma.teamMember.findMany({
       where: { teamId: { in: teamIds } },
       include: { user: true },
     });
-    const users = members.map((m) => m.user).filter((u) => u);
+    let users = members.map((m) => m.user).filter((u) => u);
+    if (!users.length) {
+      users = await loadEmployees();
+    }
     const self = await prisma.user.findUnique({ where: { id: actor.id } });
     if (self) users.push(self);
     const dedup = new Map();
@@ -345,6 +371,7 @@ const syncAdUsers = async () => {
       scanned += 1;
       seenUsernames.add(username);
       const displayName = u.displayName || username;
+      const { firstName, lastName } = splitDisplayName(displayName);
       const roles = getUserRolesFromAD(u.memberOf);
       const adDn = typeof u.dn === "string" ? u.dn : null;
       const email = u.mail || null;
@@ -355,6 +382,8 @@ const syncAdUsers = async () => {
       const existing = await prisma.user.findUnique({ where: { username } });
       const data = {
         displayName,
+        firstName,
+        lastName,
         roles,
         adDn,
         email,
@@ -503,6 +532,7 @@ app.post("/auth/login", async (req, res) => {
     if (!roles.length) return res.status(403).json({ error: "No allowed AD group" });
 
     const displayName = u.displayName || normalizedUsername;
+    const { firstName, lastName } = splitDisplayName(displayName);
     const adDn = typeof u.dn === "string" ? u.dn : null;
     const adEmail = u.mail || null;
     const teamName = AD_DERIVE_TEAM ? getTeamFromDn(adDn) : null;
@@ -511,6 +541,8 @@ app.post("/auth/login", async (req, res) => {
       where: { username: normalizedUsername },
       update: {
         displayName,
+        firstName,
+        lastName,
         roles,
         adDn,
         email: adEmail || undefined,
@@ -518,6 +550,8 @@ app.post("/auth/login", async (req, res) => {
       create: {
         username: normalizedUsername,
         displayName,
+        firstName,
+        lastName,
         roles,
         adDn,
         email: adEmail || undefined,
@@ -614,6 +648,10 @@ app.get("/auth/me", authRequired, async (req, res) => {
       id: user.id,
       username: user.username,
       displayName: user.displayName,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      phone: user.phone,
       roles: user.roles || [],
       contractType: user.contractType,
       schedule: {
@@ -627,6 +665,88 @@ app.get("/auth/me", authRequired, async (req, res) => {
       managedTeamIds: user.managedTeams.map((t) => t.id),
     },
   });
+});
+
+app.put("/me", authRequired, async (req, res) => {
+  const { displayName, firstName, lastName, email, phone } = req.body || {};
+  const user = await prisma.user.update({
+    where: { id: req.user.id },
+    data: {
+      displayName: displayName || undefined,
+      firstName: firstName || undefined,
+      lastName: lastName || undefined,
+      email: email || undefined,
+      phone: phone || undefined,
+    },
+  });
+  await audit({
+    actorUserId: req.user.id,
+    action: "UPDATE_SELF",
+    targetType: "User",
+    targetId: user.id,
+  });
+  res.json({ user });
+});
+
+app.delete("/me", authRequired, async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: "Forbidden" });
+  await prisma.teamMember.deleteMany({ where: { userId: req.user.id } });
+  await prisma.user.update({
+    where: { id: req.user.id },
+    data: { isDeleted: true, isActive: false, isProvisioned: false },
+  });
+  await audit({
+    actorUserId: req.user.id,
+    action: "DELETE_SELF",
+    targetType: "User",
+    targetId: req.user.id,
+  });
+  clearAuthCookies(res);
+  res.json({ ok: true });
+});
+
+app.get("/gdpr/export", authRequired, async (req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    include: {
+      teams: { include: { team: true } },
+      clocks: true,
+    },
+  });
+  if (!user) return res.status(404).json({ error: "Not found" });
+  await audit({
+    actorUserId: req.user.id,
+    action: "GDPR_EXPORT",
+    targetType: "User",
+    targetId: req.user.id,
+  });
+  res.json({ user });
+});
+
+app.post("/gdpr/anonymize", authRequired, async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: "Forbidden" });
+  await prisma.teamMember.deleteMany({ where: { userId: req.user.id } });
+  await prisma.user.update({
+    where: { id: req.user.id },
+    data: {
+      displayName: "Anonymized",
+      firstName: null,
+      lastName: null,
+      email: null,
+      phone: null,
+      isDeleted: true,
+      isActive: false,
+      isProvisioned: false,
+    },
+  });
+  await audit({
+    actorUserId: req.user.id,
+    action: "GDPR_ANONYMIZE",
+    targetType: "User",
+    targetId: req.user.id,
+  });
+  clearAuthCookies(res);
+  res.json({ ok: true });
 });
 
 app.get("/users", authRequired, async (req, res) => {
@@ -651,6 +771,8 @@ app.post("/users", authRequired, async (req, res) => {
   const {
     username,
     displayName,
+    firstName,
+    lastName,
     email,
     phone,
     contractType,
@@ -671,6 +793,8 @@ app.post("/users", authRequired, async (req, res) => {
     data: {
       username,
       displayName,
+      firstName: firstName || null,
+      lastName: lastName || null,
       email: email || null,
       phone: phone || null,
       roles: ["EMPLOYEE"],
@@ -705,7 +829,7 @@ app.post("/users", authRequired, async (req, res) => {
 
 app.put("/users/:id", authRequired, async (req, res) => {
   const { id } = req.params;
-  const { displayName, email, phone, contractType, schedule, isActive, teamIds } = req.body || {};
+  const { displayName, firstName, lastName, email, phone, contractType, schedule, isActive, teamIds } = req.body || {};
 
   if (!isAdmin(req.user) && !isManager(req.user)) {
     return res.status(403).json({ error: "Forbidden" });
@@ -726,6 +850,8 @@ app.put("/users/:id", authRequired, async (req, res) => {
     where: { id },
     data: {
       displayName: displayName || undefined,
+      firstName: firstName || undefined,
+      lastName: lastName || undefined,
       email: email || undefined,
       phone: phone || undefined,
       contractType: contractType || undefined,
@@ -761,7 +887,7 @@ app.put("/users/:id", authRequired, async (req, res) => {
 app.post("/users/:id/provision", authRequired, async (req, res) => {
   const { id } = req.params;
   if (!isAdmin(req.user) && !isManager(req.user)) return res.status(403).json({ error: "Forbidden" });
-  const { contractType, schedule, teamId } = req.body || {};
+  const { contractType, schedule, teamId, firstName, lastName, email, phone } = req.body || {};
 
   const target = await prisma.user.findUnique({ where: { id } });
   if (!target) return res.status(404).json({ error: "Not found" });
@@ -775,6 +901,10 @@ app.post("/users/:id/provision", authRequired, async (req, res) => {
     where: { id },
     data: {
       contractType: contractType || undefined,
+      firstName: firstName || undefined,
+      lastName: lastName || undefined,
+      email: email || undefined,
+      phone: phone || undefined,
       scheduleAmStart: schedule?.amStart || undefined,
       scheduleAmEnd: schedule?.amEnd || undefined,
       schedulePmStart: schedule?.pmStart || undefined,
@@ -839,7 +969,7 @@ app.get("/teams", authRequired, async (req, res) => {
 
 app.post("/teams", authRequired, async (req, res) => {
   if (!isAdmin(req.user) && !isManager(req.user)) return res.status(403).json({ error: "Forbidden" });
-  const { name, managerUserId, memberIds = [] } = req.body || {};
+  const { name, description, managerUserId, memberIds = [] } = req.body || {};
   if (!name) return res.status(400).json({ error: "name required" });
 
   let managerId = managerUserId || null;
@@ -850,6 +980,7 @@ app.post("/teams", authRequired, async (req, res) => {
   const team = await prisma.team.create({
     data: {
       name,
+      description: description || null,
       managerUserId: managerId,
     },
   });
@@ -876,12 +1007,13 @@ app.put("/teams/:id", authRequired, async (req, res) => {
   const allowed = await isManagerOfTeam(req.user, id);
   if (!allowed) return res.status(403).json({ error: "Forbidden" });
 
-  const { name, managerUserId, memberIds } = req.body || {};
+  const { name, description, managerUserId, memberIds } = req.body || {};
 
   const team = await prisma.team.update({
     where: { id },
     data: {
       name: name || undefined,
+      description: description || undefined,
       managerUserId: isAdmin(req.user) ? managerUserId || undefined : undefined,
     },
   });
@@ -946,19 +1078,18 @@ app.post("/clocks", authRequired, async (req, res) => {
     if (now.getTime() < earliestStart.getTime()) return res.status(400).json({ error: "Clock-in not allowed" });
     if (now.getTime() >= pmEnd.getTime()) return res.status(400).json({ error: "Clock-in not allowed" });
 
-    const canClockInMorning = now.getTime() <= amStart.getTime() + graceMs;
-    const isBeforeAfternoon = now.getTime() < pmStart.getTime();
-    const isAfternoon = now.getTime() >= pmStart.getTime();
+    const nowTs = now.getTime();
+    const amStartTs = amStart.getTime();
+    const pmStartTs = pmStart.getTime();
+    const canClockInMorning = nowTs >= amStartTs && nowTs <= amStartTs + graceMs;
+    const canClockInAfternoon = nowTs >= pmStartTs && nowTs <= pmStartTs + graceMs;
 
-    if (!canClockInMorning && isBeforeAfternoon) {
+    if (!canClockInMorning && !canClockInAfternoon) {
       return res.status(400).json({ error: "Clock-in not allowed" });
     }
 
-    let scheduledStart = amStart;
-    if (!canClockInMorning && isAfternoon) scheduledStart = pmStart;
-    else if (now.getTime() >= pmStart.getTime()) scheduledStart = pmStart;
-
-    const lateMinutes = Math.max(0, Math.floor((now.getTime() - (scheduledStart.getTime() + graceMs)) / 60000));
+    const scheduledStart = canClockInAfternoon ? pmStart : amStart;
+    const lateMinutes = Math.max(0, Math.floor((nowTs - (scheduledStart.getTime() + graceMs)) / 60000));
 
     const clock = await prisma.clock.create({
       data: {
@@ -1157,6 +1288,54 @@ app.get("/reports", authRequired, async (req, res) => {
   });
 });
 
+app.get("/reports/team", authRequired, async (req, res) => {
+  const { from, to, teamId } = req.query || {};
+  if (!from || !to || !teamId) return res.status(400).json({ error: "from/to/teamId required" });
+  const allowed = await isManagerOfTeam(req.user, teamId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+  const start = new Date(`${from}T00:00:00`);
+  const end = new Date(`${to}T23:59:59`);
+  const members = await prisma.teamMember.findMany({ where: { teamId }, include: { user: true } });
+  const userIds = members.map((m) => m.userId);
+  const clocks = await prisma.clock.findMany({
+    where: { userId: { in: userIds }, clockInAt: { gte: start, lte: end } },
+    orderBy: { clockInAt: "asc" },
+  });
+  const daily = {};
+  const weekly = {};
+  for (const c of clocks) {
+    const dayKey = c.clockInAt.toISOString().slice(0, 10);
+    daily[dayKey] = (daily[dayKey] || 0) + (c.workedMinutes || 0);
+    const weekKey = `${dayKey.slice(0, 4)}-W${Math.ceil((new Date(dayKey).getDate()) / 7)}`;
+    weekly[weekKey] = (weekly[weekKey] || 0) + (c.workedMinutes || 0);
+  }
+  res.json({ daily, weekly });
+});
+
+app.get("/reports/user", authRequired, async (req, res) => {
+  const { from, to, userId } = req.query || {};
+  if (!from || !to || !userId) return res.status(400).json({ error: "from/to/userId required" });
+  const allowed = await canAccessUser(req.user, userId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+  const start = new Date(`${from}T00:00:00`);
+  const end = new Date(`${to}T23:59:59`);
+  const clocks = await prisma.clock.findMany({
+    where: { userId, clockInAt: { gte: start, lte: end } },
+    orderBy: { clockInAt: "asc" },
+  });
+  const daily = {};
+  const weekly = {};
+  for (const c of clocks) {
+    const dayKey = c.clockInAt.toISOString().slice(0, 10);
+    daily[dayKey] = (daily[dayKey] || 0) + (c.workedMinutes || 0);
+    const weekKey = `${dayKey.slice(0, 4)}-W${Math.ceil((new Date(dayKey).getDate()) / 7)}`;
+    weekly[weekKey] = (weekly[weekKey] || 0) + (c.workedMinutes || 0);
+  }
+  res.json({ daily, weekly });
+});
+
 app.post("/admin/reset", authRequired, requireAdmin, async (req, res) => {
   await prisma.clock.deleteMany();
   await prisma.teamMember.deleteMany();
@@ -1238,7 +1417,11 @@ app.post("/admin/sync-ad", authRequired, requireAdmin, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Backend on :${PORT}`));
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`Backend on :${PORT}`));
+}
+
+module.exports = app;
 
 if (AD_SYNC_ENABLED && AD_SYNC_INTERVAL_MINUTES > 0) {
   const intervalMs = AD_SYNC_INTERVAL_MINUTES * 60 * 1000;
