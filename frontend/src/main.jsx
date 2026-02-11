@@ -42,6 +42,8 @@ function App() {
   const [password, setPassword] = useState("");
   const [showClockModal, setShowClockModal] = useState(false);
   const [clockError, setClockError] = useState("");
+  const [clockTargetId, setClockTargetId] = useState(null);
+  const [clockTargetLabel, setClockTargetLabel] = useState("");
   const [period, setPeriod] = useState("week");
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
@@ -83,6 +85,61 @@ function App() {
     if (!parts.length) return { firstName: "", lastName: "" };
     if (parts.length === 1) return { firstName: parts[0], lastName: "" };
     return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+  };
+
+  const WORKING_DAYS = [
+    { id: 1, label: "Lun" },
+    { id: 2, label: "Mar" },
+    { id: 3, label: "Mer" },
+    { id: 4, label: "Jeu" },
+    { id: 5, label: "Ven" },
+    { id: 6, label: "Sam" },
+    { id: 0, label: "Dim" },
+  ];
+
+  const renderSparkline = (series, id, color = "#f59e0b", options = {}) => {
+    if (!Array.isArray(series) || series.length < 2) return null;
+    const width = 220;
+    const height = 60;
+    const pad = 4;
+    const normalized = series.map((v) => (typeof v === "number" ? { value: v, date: "" } : { value: v.value || 0, date: v.date || "" }));
+    const values = normalized.map((v) => v.value);
+    const max = Math.max(1, options.maxValue || 0, ...values);
+    const step = (width - pad * 2) / (values.length - 1);
+    const smoothValues = values.map((_, i) => {
+      const prev = values[i - 1] ?? values[i];
+      const curr = values[i];
+      const next = values[i + 1] ?? values[i];
+      return (prev + curr + next) / 3;
+    });
+    const points = smoothValues.map((v, i) => {
+      const x = pad + i * step;
+      const y = height - pad - (v / max) * (height - pad * 2);
+      return { x, y };
+    });
+    const line = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+    const area = `M ${points[0].x} ${height - pad} ${points
+      .map((p) => `L ${p.x} ${p.y}`)
+      .join(" ")} L ${points[points.length - 1].x} ${height - pad} Z`;
+    const fillId = `spark-${id}`;
+    const lineWidth = options.lineWidth || 2;
+
+    return (
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: "100%", height: 60, marginTop: 8 }}
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.45" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.05" />
+          </linearGradient>
+        </defs>
+        <path d={area} fill={`url(#${fillId})`} stroke="none" />
+        <path d={line} fill="none" stroke={color} strokeWidth={lineWidth} />
+      </svg>
+    );
   };
 
   const roles = user?.roles || [];
@@ -183,13 +240,20 @@ function App() {
       start = new Date(now.getFullYear(), now.getMonth(), 1);
       end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     } else if (period === "year") {
-      start = new Date(now.getFullYear(), 0, 1);
-      end = new Date(now.getFullYear(), 11, 31);
+      start = new Date(now);
+      start.setFullYear(now.getFullYear() - 1);
+      end = new Date(now);
     }
 
     const custom = rangeStart && rangeEnd;
-    const from = custom ? rangeStart : start.toISOString().slice(0, 10);
-    const to = custom ? rangeEnd : end.toISOString().slice(0, 10);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const rawFrom = custom ? rangeStart : start.toISOString().slice(0, 10);
+    const rawTo = custom ? rangeEnd : end.toISOString().slice(0, 10);
+    const toDate = new Date(`${rawTo}T00:00:00`);
+    const safeTo = toDate > today ? today.toISOString().slice(0, 10) : rawTo;
+    const from = rawFrom;
+    const to = safeTo;
 
     try {
       const data = await apiFetch(`/reports?from=${from}&to=${to}`);
@@ -263,11 +327,31 @@ function App() {
     navigate("/sign-in");
   };
 
+  const openClockModal = (target) => {
+    if (target?.id) {
+      setClockTargetId(target.id);
+      setClockTargetLabel(target.displayName || target.username || "");
+    } else if (user?.id) {
+      setClockTargetId(user.id);
+      setClockTargetLabel(user.displayName || user.username || "");
+    } else {
+      setClockTargetId(null);
+      setClockTargetLabel("");
+    }
+    setClockError("");
+    setShowClockModal(true);
+  };
+
   const onClockIn = async () => {
     setClockError("");
     try {
-      await apiFetch("/clocks", { method: "POST", body: JSON.stringify({ type: "IN" }) });
+      await apiFetch("/clocks", {
+        method: "POST",
+        body: JSON.stringify({ type: "IN", userId: clockTargetId || undefined }),
+      });
       setShowClockModal(false);
+      setClockTargetId(null);
+      setClockTargetLabel("");
       await loadDashboard();
     } catch (err) {
       setClockError(err.message);
@@ -277,8 +361,13 @@ function App() {
   const onClockOut = async () => {
     setClockError("");
     try {
-      await apiFetch("/clocks", { method: "POST", body: JSON.stringify({ type: "OUT" }) });
+      await apiFetch("/clocks", {
+        method: "POST",
+        body: JSON.stringify({ type: "OUT", userId: clockTargetId || undefined }),
+      });
       setShowClockModal(false);
+      setClockTargetId(null);
+      setClockTargetLabel("");
       await loadDashboard();
     } catch (err) {
       setClockError(err.message);
@@ -367,6 +456,31 @@ function App() {
     }
   };
 
+  const saveUser = async (u) => {
+    if (!u?.id) return;
+    try {
+      const workingDays = Array.isArray(u.workingDays) ? u.workingDays : WORKING_DAYS.filter((d) => d.id !== 0 && d.id !== 6).map((d) => d.id);
+      await apiFetch(`/users/${u.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          contractType: u.contractType || null,
+          workingDays,
+          schedule: {
+            amStart: u.scheduleAmStart || null,
+            amEnd: u.scheduleAmEnd || null,
+            pmStart: u.schedulePmStart || null,
+            pmEnd: u.schedulePmEnd || null,
+          },
+        }),
+      });
+      await loadUsers();
+      navigate("/members");
+    } catch (err) {
+      setError(err.message);
+      window.alert(err.message || "Erreur lors de l’enregistrement.");
+    }
+  };
+
   const provisionUser = async () => {
     if (!createUserId) return;
     try {
@@ -375,6 +489,7 @@ function App() {
         method: "POST",
         body: JSON.stringify({
           contractType: createContract || null,
+          workingDays: [1, 2, 3, 4, 5],
           firstName: selected?.firstName || splitDisplayName(selected?.displayName).firstName || null,
           lastName: selected?.lastName || splitDisplayName(selected?.displayName).lastName || null,
           email: createEmail || null,
@@ -477,7 +592,7 @@ function App() {
 
   const renderLogin = () => (
     <form onSubmit={onSubmit} style={{ marginTop: 18 }}>
-      <div style={{ display: "grid", gap: 12, maxWidth: 520 }}>
+      <div style={{ display: "grid", gap: 12, maxWidth: 520, margin: "0 auto", width: "100%" }}>
         <label style={{ display: "grid", gap: 6 }}>
           <span style={{ fontSize: 12, color: "#6b7280" }}>Nom d’utilisateur</span>
           <input
@@ -564,7 +679,7 @@ function App() {
               </div>
             </div>
             <button
-              onClick={() => setShowClockModal(true)}
+              onClick={() => openClockModal(user)}
               style={{ border: "1px solid #e5e7eb", padding: "8px 14px", borderRadius: 8, background: "#111827", color: "white" }}
             >
               Pointage
@@ -663,10 +778,46 @@ function App() {
     </div>
   );
 
-  const renderDashboard = () => renderDashboardShell(
+  const renderDashboard = () => {
+    const workSeries = report?.dailyWorked?.map((d) => d.hours ?? (d.minutes || 0) / 60) || [];
+    const lateSeries = report?.dailyLatenessRate?.map((d) => d.value) || [];
+    const attSeries = report?.dailyAttendanceRate?.map((d) => d.value) || [];
+    const absSeries = report?.dailyAbsenceRate?.map((d) => d.value) || [];
+    return renderDashboardShell(
     <>
-      <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-        <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb" }}>
+      <div
+        style={{
+          marginTop: 18,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 12,
+        }}
+      >
+        {(isAdmin || isManager) && (
+          <div
+            style={{
+              gridColumn: "1 / -1",
+              padding: 12,
+              borderRadius: 8,
+              background: "#fff",
+              border: "1px solid #e5e7eb",
+              minHeight: 140,
+            }}
+          >
+            <div style={{ fontSize: 12, color: "#6b7280" }}>Total travaillé</div>
+            <div style={{ fontSize: 24, fontWeight: 600 }}>
+              {report ? `${report.workedHours.toFixed(2)}h` : "—"}
+            </div>
+            <div style={{ fontSize: 12, color: "#9ca3af" }}>Sur période</div>
+            {renderSparkline(workSeries, "total", "#38bdf8", {
+              unit: "h",
+              formatValue: (v) => `${v.toFixed(2)}h`,
+              lineWidth: period === "year" ? 1 : 2,
+            })}
+          </div>
+        )}
+
+        <div style={{ gridColumn: "1 / 2", padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb", minHeight: 140 }}>
           <div style={{ fontSize: 12, color: "#6b7280" }}>
             Taux de retard {isAdmin || isManager ? "moyen" : "personnel"}
           </div>
@@ -674,10 +825,16 @@ function App() {
             {report ? `${report.latenessRate.toFixed(2)}%` : "—"}
           </div>
           <div style={{ fontSize: 12, color: "#9ca3af" }}>
-            Sur {report?.shiftCount || 0} pointages
+            Sur {(report?.lateCount ?? "—")} / {(report?.expectedShiftCount || 0)} jours
           </div>
+          {renderSparkline(lateSeries, "late", "#f59e0b", {
+            unit: "%",
+            formatValue: (v) => `${v.toFixed(1)}%`,
+            maxValue: 100,
+            lineWidth: period === "year" ? 1 : 2,
+          })}
         </div>
-        <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb" }}>
+        <div style={{ gridColumn: "2 / 3", padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb", minHeight: 140 }}>
           <div style={{ fontSize: 12, color: "#6b7280" }}>
             Temps travaillé {isAdmin || isManager ? "moyen" : "personnel"}
           </div>
@@ -685,8 +842,13 @@ function App() {
             {report ? `${report.averageHours.toFixed(2)}h` : "—"}
           </div>
           <div style={{ fontSize: 12, color: "#9ca3af" }}>Sur période</div>
+          {renderSparkline(workSeries, "work", "#60a5fa", {
+            unit: "h",
+            formatValue: (v) => `${v.toFixed(2)}h`,
+            lineWidth: period === "year" ? 1 : 2,
+          })}
         </div>
-        <div style={{ padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb" }}>
+        <div style={{ gridColumn: "1 / 2", padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb", minHeight: 140 }}>
           <div style={{ fontSize: 12, color: "#6b7280" }}>Taux d’assiduité</div>
           <div style={{ fontSize: 24, fontWeight: 600 }}>
             {report ? `${report.attendanceRate.toFixed(2)}%` : "—"}
@@ -694,6 +856,27 @@ function App() {
           <div style={{ fontSize: 12, color: "#9ca3af" }}>
             {report ? `${report.workedHours.toFixed(2)}h / ${report.expectedHours.toFixed(2)}h` : "—"}
           </div>
+          {renderSparkline(attSeries, "att", "#34d399", {
+            unit: "%",
+            formatValue: (v) => `${v.toFixed(1)}%`,
+            maxValue: 100,
+            lineWidth: period === "year" ? 1 : 2,
+          })}
+        </div>
+        <div style={{ gridColumn: "2 / 3", padding: 12, borderRadius: 8, background: "#fff", border: "1px solid #e5e7eb", minHeight: 140 }}>
+          <div style={{ fontSize: 12, color: "#6b7280" }}>Absences</div>
+          <div style={{ fontSize: 24, fontWeight: 600 }}>
+            {report ? `${report.absenceRate.toFixed(2)}%` : "—"}
+          </div>
+          <div style={{ fontSize: 12, color: "#9ca3af" }}>
+            {report ? `${report.absenceCount} / ${report.expectedShiftCount} jours` : "—"}
+          </div>
+          {renderSparkline(absSeries, "abs", "#ef4444", {
+            unit: "%",
+            formatValue: (v) => `${v.toFixed(1)}%`,
+            maxValue: 100,
+            lineWidth: period === "year" ? 1 : 2,
+          })}
         </div>
       </div>
 
@@ -824,7 +1007,8 @@ function App() {
       Exporter CSV
     </button>,
     { showFilters: true, showUserPanel: true }
-  );
+    );
+  };
 
   const renderMembers = () => (
     <div style={{ marginTop: 20 }}>
@@ -851,21 +1035,34 @@ function App() {
               return !rolesList.includes("MANAGER") && !rolesList.includes("ADMIN");
             })
             .map((u) => (
-              <button
+              <div
                 key={u.id}
-                onClick={() => navigate(`/members/${u.id}`)}
                 style={{
                   padding: "10px 12px",
                   border: "1px solid #e5e7eb",
                   borderRadius: 10,
                   background: "#fff",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: 13,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
                 }}
               >
-                {u.displayName || u.username}
-              </button>
+                <button
+                  onClick={() => navigate(`/members/${u.id}`)}
+                  style={{ border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontSize: 13, padding: 0 }}
+                >
+                  {u.displayName || u.username}
+                </button>
+                {(isAdmin || isManager) && (
+                  <button
+                    onClick={() => openClockModal(u)}
+                    style={{ border: "1px solid #e5e7eb", padding: "6px 10px", borderRadius: 8, background: "#111827", color: "white", fontSize: 12 }}
+                  >
+                    Pointer
+                  </button>
+                )}
+              </div>
             ))}
         </div>
       ) : (
@@ -1106,7 +1303,7 @@ function App() {
         <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Détail employé</h3>
         <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
-            onClick={saveUsers}
+            onClick={() => saveUser(target)}
             style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#111827", color: "white" }}
           >
             Enregistrer
@@ -1142,6 +1339,33 @@ function App() {
                 <option value="CDD">CDD</option>
                 <option value="STAGE">Stage</option>
               </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>Jours travaillés</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {WORKING_DAYS.map((d) => {
+                  const current = Array.isArray(target.workingDays)
+                    ? target.workingDays
+                    : WORKING_DAYS.filter((x) => x.id !== 0 && x.id !== 6).map((x) => x.id);
+                  const checked = current.includes(d.id);
+                  return (
+                    <label key={d.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const nextDays = e.target.checked
+                            ? [...current, d.id]
+                            : current.filter((v) => v !== d.id);
+                          const next = users.map((x) => (x.id === target.id ? { ...x, workingDays: nextDays } : x));
+                          setUsers(next);
+                        }}
+                      />
+                      <span>{d.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
               <div>
@@ -1587,7 +1811,11 @@ function App() {
 
       {showClockModal && (
         <div
-          onClick={() => setShowClockModal(false)}
+          onClick={() => {
+            setShowClockModal(false);
+            setClockTargetId(null);
+            setClockTargetLabel("");
+          }}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
         >
           <div
@@ -1595,6 +1823,9 @@ function App() {
             style={{ width: "100%", maxWidth: 420, background: "#fff", borderRadius: 12, padding: 20, boxShadow: "0 10px 30px rgba(0,0,0,0.2)" }}
           >
             <h3 style={{ margin: "0 0 6px" }}>Pointage</h3>
+            {clockTargetLabel && (
+              <div style={{ fontSize: 12, color: "#6b7280" }}>Utilisateur : {clockTargetLabel}</div>
+            )}
             {clockError && <div style={{ marginTop: 8, fontSize: 12, color: "#b91c1c" }}>{clockError}</div>}
             <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
               <button
@@ -1611,7 +1842,11 @@ function App() {
               </button>
             </div>
             <button
-              onClick={() => setShowClockModal(false)}
+              onClick={() => {
+                setShowClockModal(false);
+                setClockTargetId(null);
+                setClockTargetLabel("");
+              }}
               style={{ marginTop: 12, width: "100%", border: "none", padding: "10px 12px", borderRadius: 8, background: "#ef4444", color: "white" }}
             >
               Fermer

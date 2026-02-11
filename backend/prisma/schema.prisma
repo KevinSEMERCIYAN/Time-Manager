@@ -32,6 +32,7 @@ model User {
   scheduleAmEnd    String?
   schedulePmStart  String?
   schedulePmEnd    String?
+  workingDays      Json?
   graceMinutes     Int?           @default(15)
   isActive         Boolean        @default(true)
   isDeleted        Boolean        @default(false)

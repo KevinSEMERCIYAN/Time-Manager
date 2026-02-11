@@ -156,6 +156,19 @@ const parseTimeOnDate = (dateStr, timeStr) => {
   return d;
 };
 
+const normalizeWorkingDays = (user) => {
+  const raw = Array.isArray(user?.workingDays) ? user.workingDays : null;
+  const parsed = raw
+    ? raw.map((v) => parseInt(v, 10)).filter((v) => Number.isFinite(v) && v >= 0 && v <= 6)
+    : [];
+  return parsed.length ? parsed : [1, 2, 3, 4, 5];
+};
+
+const isWorkingDay = (user, dateObj) => {
+  const day = dateObj.getDay();
+  return normalizeWorkingDays(user).includes(day);
+};
+
 const scheduleForUser = (user) => ({
   amStart: user.scheduleAmStart || DEFAULT_SCHEDULE.amStart,
   amEnd: user.scheduleAmEnd || DEFAULT_SCHEDULE.amEnd,
@@ -164,8 +177,13 @@ const scheduleForUser = (user) => ({
   graceMin: Number.isFinite(user.graceMinutes) ? user.graceMinutes : DEFAULT_SCHEDULE.graceMin,
 });
 
-const expectedDailyHours = (user) => {
-  const baseDate = new Date().toISOString().slice(0, 10);
+const expectedDailyHours = (user, dateObj) => {
+  if (!user?.contractType) return 0;
+  if (!user?.scheduleAmStart || !user?.scheduleAmEnd || !user?.schedulePmStart || !user?.schedulePmEnd) {
+    return 0;
+  }
+  if (dateObj && !isWorkingDay(user, dateObj)) return 0;
+  const baseDate = (dateObj || new Date()).toISOString().slice(0, 10);
   const s = scheduleForUser(user);
   const amStart = parseTimeOnDate(baseDate, s.amStart);
   const amEnd = parseTimeOnDate(baseDate, s.amEnd);
@@ -197,6 +215,23 @@ const canAccessUser = async (actor, userId) => {
   if (!managerTeamIds.length) return false;
   const membership = await prisma.teamMember.findFirst({
     where: { userId, teamId: { in: managerTeamIds } },
+  });
+  return !!membership;
+};
+
+const canManageClockFor = async (actor, targetId) => {
+  if (isAdmin(actor)) return true;
+  if (actor.id === targetId) return true;
+  if (!isManager(actor)) return false;
+  const target = await prisma.user.findUnique({ where: { id: targetId } });
+  if (!target || target.isDeleted || target.isActive === false) return false;
+  if (!target.isProvisioned) return false;
+  const rolesList = Array.isArray(target.roles) ? target.roles : [];
+  if (!rolesList.includes("EMPLOYEE")) return false;
+  const managerTeamIds = await getManagerTeamIds(actor.id);
+  if (!managerTeamIds.length) return false;
+  const membership = await prisma.teamMember.findFirst({
+    where: { userId: targetId, teamId: { in: managerTeamIds } },
   });
   return !!membership;
 };
@@ -661,6 +696,7 @@ app.get("/auth/me", authRequired, async (req, res) => {
         pmEnd: user.schedulePmEnd,
         graceMin: user.graceMinutes,
       },
+      workingDays: user.workingDays || [1, 2, 3, 4, 5],
       teamIds: user.teams.map((t) => t.teamId),
       managedTeamIds: user.managedTeams.map((t) => t.id),
     },
@@ -829,7 +865,7 @@ app.post("/users", authRequired, async (req, res) => {
 
 app.put("/users/:id", authRequired, async (req, res) => {
   const { id } = req.params;
-  const { displayName, firstName, lastName, email, phone, contractType, schedule, isActive, teamIds } = req.body || {};
+  const { displayName, firstName, lastName, email, phone, contractType, schedule, isActive, teamIds, workingDays } = req.body || {};
 
   if (!isAdmin(req.user) && !isManager(req.user)) {
     return res.status(403).json({ error: "Forbidden" });
@@ -860,6 +896,7 @@ app.put("/users/:id", authRequired, async (req, res) => {
       schedulePmStart: schedule?.pmStart || undefined,
       schedulePmEnd: schedule?.pmEnd || undefined,
       graceMinutes: Number.isFinite(schedule?.graceMin) ? schedule.graceMin : undefined,
+      workingDays: Array.isArray(workingDays) ? workingDays : undefined,
       isActive: typeof isActive === "boolean" ? isActive : undefined,
     },
   });
@@ -887,7 +924,7 @@ app.put("/users/:id", authRequired, async (req, res) => {
 app.post("/users/:id/provision", authRequired, async (req, res) => {
   const { id } = req.params;
   if (!isAdmin(req.user) && !isManager(req.user)) return res.status(403).json({ error: "Forbidden" });
-  const { contractType, schedule, teamId, firstName, lastName, email, phone } = req.body || {};
+  const { contractType, schedule, teamId, firstName, lastName, email, phone, workingDays } = req.body || {};
 
   const target = await prisma.user.findUnique({ where: { id } });
   if (!target) return res.status(404).json({ error: "Not found" });
@@ -910,6 +947,9 @@ app.post("/users/:id/provision", authRequired, async (req, res) => {
       schedulePmStart: schedule?.pmStart || undefined,
       schedulePmEnd: schedule?.pmEnd || undefined,
       graceMinutes: Number.isFinite(schedule?.graceMin) ? schedule.graceMin : undefined,
+      workingDays: Array.isArray(workingDays)
+        ? workingDays
+        : (Array.isArray(target.workingDays) ? target.workingDays : [1, 2, 3, 4, 5]),
       isProvisioned: true,
       isDeleted: false,
       isActive: true,
@@ -1053,8 +1093,11 @@ app.delete("/teams/:id", authRequired, async (req, res) => {
 });
 
 app.post("/clocks", authRequired, async (req, res) => {
-  const { type } = req.body || {};
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  const { type, userId } = req.body || {};
+  const targetId = userId || req.user.id;
+  const allowed = await canManageClockFor(req.user, targetId);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+  const user = await prisma.user.findUnique({ where: { id: targetId } });
   if (!user) return res.status(404).json({ error: "Not found" });
   if (user.isDeleted) return res.status(403).json({ error: "Forbidden" });
 
@@ -1103,12 +1146,12 @@ app.post("/clocks", authRequired, async (req, res) => {
       },
     });
 
-    await audit({
-      actorUserId: user.id,
+  await audit({
+      actorUserId: req.user.id,
       action: "CLOCK_IN",
       targetType: "Clock",
       targetId: clock.id,
-      meta: { lateMinutes },
+      meta: { lateMinutes, targetUserId: user.id },
     });
 
     return res.json({ clock });
@@ -1130,11 +1173,11 @@ app.post("/clocks", authRequired, async (req, res) => {
   });
 
   await audit({
-    actorUserId: user.id,
+    actorUserId: req.user.id,
     action: "CLOCK_OUT",
     targetType: "Clock",
     targetId: clock.id,
-    meta: { workedMinutes },
+    meta: { workedMinutes, targetUserId: user.id },
   });
 
   return res.json({ clock });
@@ -1237,7 +1280,11 @@ app.get("/reports", authRequired, async (req, res) => {
 
   let lateCount = 0;
   let shiftCount = 0;
+  let expectedShiftCount = 0;
   let workedMinutesTotal = 0;
+  const workedByDay = new Map();
+  const dailyShiftCount = new Map();
+  const dailyLateCount = new Map();
 
   const byUserDay = new Map();
   for (const c of clocks) {
@@ -1245,7 +1292,10 @@ app.get("/reports", authRequired, async (req, res) => {
     const list = byUserDay.get(key) || [];
     list.push(c);
     byUserDay.set(key, list);
-    workedMinutesTotal += c.workedMinutes || 0;
+    const worked = c.workedMinutes || 0;
+    workedMinutesTotal += worked;
+    const dayKey = c.clockInAt.toISOString().slice(0, 10);
+    workedByDay.set(dayKey, (workedByDay.get(dayKey) || 0) + worked);
   }
 
   for (const list of byUserDay.values()) {
@@ -1253,27 +1303,55 @@ app.get("/reports", authRequired, async (req, res) => {
     const first = list[0];
     shiftCount += 1;
     if ((first.lateMinutes || 0) > 0) lateCount += 1;
+    const dayKey = first.clockInAt.toISOString().slice(0, 10);
+    dailyShiftCount.set(dayKey, (dailyShiftCount.get(dayKey) || 0) + 1);
+    if ((first.lateMinutes || 0) > 0) {
+      dailyLateCount.set(dayKey, (dailyLateCount.get(dayKey) || 0) + 1);
+    }
   }
-
-  const latenessRate = shiftCount ? (lateCount / shiftCount) * 100 : 0;
 
   let expectedMinutes = 0;
   const days = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const day = d.getDay();
-    if (day === 0 || day === 6) continue;
     days.push(new Date(d));
   }
 
   for (const day of days) {
     for (const u of users) {
-      expectedMinutes += expectedDailyHours(u) * 60;
+      const dailyHours = expectedDailyHours(u, day);
+      if (dailyHours > 0) expectedShiftCount += 1;
+      expectedMinutes += dailyHours * 60;
     }
   }
+
+  const latenessRate = expectedShiftCount ? (lateCount / expectedShiftCount) * 100 : 0;
 
   const attendanceRate = expectedMinutes ? (workedMinutesTotal / expectedMinutes) * 100 : 0;
   const totalHours = workedMinutesTotal / 60;
   const averageHours = users.length ? totalHours / users.length : 0;
+  const absenceCount = Math.max(0, expectedShiftCount - shiftCount);
+  const absenceRate = expectedShiftCount ? (absenceCount / expectedShiftCount) * 100 : 0;
+
+  const dailyWorked = [];
+  const dailyLatenessRate = [];
+  const dailyAttendanceRate = [];
+  const dailyAbsenceRate = [];
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const key = d.toISOString().slice(0, 10);
+    const worked = workedByDay.get(key) || 0;
+    const shifts = dailyShiftCount.get(key) || 0;
+    const late = dailyLateCount.get(key) || 0;
+    const dailyExpected = users.reduce((sum, u) => sum + expectedDailyHours(u, d) * 60, 0);
+    const dailyExpectedShifts = users.reduce(
+      (sum, u) => sum + (expectedDailyHours(u, d) > 0 ? 1 : 0),
+      0
+    );
+
+    dailyWorked.push({ date: key, hours: worked / 60 });
+    dailyLatenessRate.push({ date: key, value: dailyExpectedShifts ? (late / dailyExpectedShifts) * 100 : 0 });
+    dailyAttendanceRate.push({ date: key, value: dailyExpected ? (worked / dailyExpected) * 100 : 0 });
+    dailyAbsenceRate.push({ date: key, value: dailyExpected ? (1 - worked / dailyExpected) * 100 : 0 });
+  }
 
   res.json({
     summary: {
@@ -1282,8 +1360,16 @@ app.get("/reports", authRequired, async (req, res) => {
       attendanceRate,
       averageHours,
       shiftCount,
+      expectedShiftCount,
+      lateCount,
       workedHours: workedMinutesTotal / 60,
       expectedHours: expectedMinutes / 60,
+      absenceCount,
+      absenceRate,
+      dailyWorked,
+      dailyLatenessRate,
+      dailyAttendanceRate,
+      dailyAbsenceRate,
     },
   });
 });
@@ -1353,32 +1439,49 @@ app.post("/admin/seed", authRequired, requireAdmin, async (req, res) => {
   if (!users.length) return res.status(400).json({ error: "No users" });
 
   const randomMinutes = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const base = new Date();
-  const daysToGenerate = 90;
+  const daysToGenerate = 730;
 
   for (const u of users) {
+    if (!u.contractType) continue;
+    if (!u.scheduleAmStart || !u.scheduleAmEnd || !u.schedulePmStart || !u.schedulePmEnd) continue;
     for (let i = 0; i < daysToGenerate; i += 1) {
       const d = new Date(base);
       d.setDate(d.getDate() - i);
       d.setHours(0, 0, 0, 0);
-      const day = d.getDay();
-      if (day === 0 || day === 6) continue;
+      if (!isWorkingDay(u, d)) continue;
       const dateKey = d.toISOString().slice(0, 10);
 
       const sched = scheduleForUser(u);
       const amStart = parseTimeOnDate(dateKey, sched.amStart);
+      const amEnd = parseTimeOnDate(dateKey, sched.amEnd);
       const pmStart = parseTimeOnDate(dateKey, sched.pmStart);
       const pmEnd = parseTimeOnDate(dateKey, sched.pmEnd);
       const graceMin = sched.graceMin || 15;
 
-      const lateIn = randomMinutes(-5, 25);
-      const extraOut = randomMinutes(-10, 20);
+      const absenceChance = Math.random();
+      if (absenceChance < 0.06) continue; // absence
 
-      const clockIn = new Date(amStart);
+      const halfDayChance = Math.random();
+      const lateIn = randomMinutes(-5, 20);
+      const extraOut = randomMinutes(-30, 15);
+
+      let clockIn = new Date(amStart);
+      let clockOut = new Date(pmEnd);
+
+      if (halfDayChance < 0.05) {
+        clockOut = new Date(amEnd);
+      } else if (halfDayChance < 0.1) {
+        clockIn = new Date(pmStart);
+      }
+
       clockIn.setMinutes(clockIn.getMinutes() + lateIn);
-      const clockOut = new Date(pmEnd);
       clockOut.setMinutes(clockOut.getMinutes() + extraOut);
+
+      if (clockOut < clockIn) {
+        clockOut = new Date(clockIn);
+        clockOut.setMinutes(clockOut.getMinutes() + randomMinutes(60, 240));
+      }
 
       const scheduledStart = clockIn < pmStart ? amStart : pmStart;
       const lateMinutes = Math.max(
