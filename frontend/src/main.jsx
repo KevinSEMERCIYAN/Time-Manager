@@ -1,17 +1,24 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import "./styles.css";
-import { ManagerDashboard } from "./ManagerDashboard";
 
-// Illustration de droite sur l'écran de connexion.
-// Place le fichier tel quel dans frontend/public/assets/
-// avec son nom d'origine : "ChatGPT Image 3 févr. 2026, 15_05_08.png"
-const ILLUSTRATION_SRC =
-  "/assets/ChatGPT Image 3 févr. 2026, 15_05_08.png";
+import { ManagerDashboard } from "./ManagerDashboard";
+import CreateTeam from "./CreateTeam";
+import Profile from "./Profile";
+
+const ILLUSTRATION_SRC = "/assets/ChatGPT Image 3 févr. 2026, 15_05_08.png";
 
 function LoginPage() {
+  const navigate = useNavigate();
+
+  function onSubmit(e) {
+    e.preventDefault();
+    // plus tard: call API login, stock JWT, etc.
+    navigate("/manager");
+  }
+
   return (
     <div className="tm-app">
       <div className="tm-login-card">
@@ -28,11 +35,9 @@ function LoginPage() {
         <main className="tm-login-body">
           <section className="tm-login-form">
             <h1 className="tm-login-title">Bienvenue</h1>
-            <p className="tm-login-subtitle">
-              Connectez-vous à votre compte
-            </p>
+            <p className="tm-login-subtitle">Connectez-vous à votre compte</p>
 
-            <form className="tm-form">
+            <form className="tm-form" onSubmit={onSubmit}>
               <div className="tm-form-field">
                 <label htmlFor="email" className="tm-label">
                   Email
@@ -46,6 +51,7 @@ function LoginPage() {
                     type="email"
                     placeholder="exemple@email.com"
                     className="tm-input"
+                    required
                   />
                 </div>
               </div>
@@ -63,6 +69,7 @@ function LoginPage() {
                     type="password"
                     placeholder="••••••••"
                     className="tm-input"
+                    required
                   />
                 </div>
               </div>
@@ -102,8 +109,15 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<LoginPage />} />
+        <Route path="/" element={<Navigate to="/login" replace />} />
+        <Route path="/login" element={<LoginPage />} />
+
         <Route path="/manager" element={<ManagerDashboard />} />
+        <Route path="/manager/create-team" element={<CreateTeam />} />
+
+        <Route path="/profile" element={<Profile />} />
+
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   );

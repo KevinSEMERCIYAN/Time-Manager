@@ -1,4 +1,3 @@
-/* Import de la police Inter depuis Google Fonts */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 :root {
@@ -852,4 +851,12 @@ body {
     font-size: 26px;
   }
 }
+
+  .tm-topbar-select {
+  appearance: none;
+}
+  .tm-topbar-select-group select.tm-topbar-select, .tm-topbar-filter {
+  padding-right: 34px;
+}
+
 
