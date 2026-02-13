@@ -52,6 +52,11 @@ services:
       MAIL_HOST: mailpit
       MAIL_PORT: "1025"
       MAIL_FROM: no-reply@primebank.local
+
+      # Connexion sans LDAP en local (désactiver en prod)
+      DEV_AUTH: "true"
+      DEV_AUTH_USER: "dev"
+      DEV_AUTH_PASSWORD: "dev"
     depends_on:
       db:
         condition: service_healthy

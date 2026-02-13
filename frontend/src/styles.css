@@ -6,9 +6,9 @@
   --tm-surface-soft: #e7eaf0;
   --tm-border: #d2d9e2;
 
-  --tm-text-main: #172f50;
+  --tm-text-main: #172150;
   --tm-text-secondary: #3c628c;
-  --tm-text-muted: #8faeb6;
+  --tm-text-muted: #8faebe;
 
   --tm-primary: #367ecc;
   --tm-success: #2da169;
@@ -39,6 +39,77 @@ body {
 
 #root {
   height: 100%;
+}
+
+/* Charte graphique – wrapper app (app/App.jsx, pages, layouts) */
+.tm-app-charter {
+  min-height: 100vh;
+  background: var(--tm-bg-app);
+  padding: 24px;
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--tm-text-main);
+}
+.tm-app-charter .tm-card {
+  background: var(--tm-surface);
+  border-radius: var(--tm-radius-lg);
+  box-shadow: var(--tm-shadow-soft);
+}
+.tm-app-charter .tm-text-muted { color: var(--tm-text-muted); font-size: 12px; }
+.tm-app-charter .tm-btn {
+  border: 1px solid var(--tm-border);
+  border-radius: var(--tm-radius-md);
+  background: var(--tm-surface);
+  color: var(--tm-text-main);
+  padding: 8px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.tm-app-charter .tm-btn:hover:not(:disabled) {
+  background: var(--tm-surface-soft);
+  border-color: var(--tm-text-muted);
+}
+.tm-app-charter .tm-btn:focus-visible {
+  outline: 2px solid var(--tm-primary);
+  outline-offset: 2px;
+}
+.tm-app-charter .tm-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.tm-app-charter .tm-btn-primary {
+  background: var(--tm-primary);
+  color: white;
+  border: none;
+}
+.tm-app-charter .tm-btn-primary:hover:not(:disabled) {
+  background: var(--tm-text-secondary);
+  filter: brightness(1.05);
+}
+.tm-app-charter .tm-btn-danger {
+  background: var(--tm-danger);
+  color: white;
+  border: none;
+}
+.tm-app-charter .tm-btn-danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.tm-app-charter .tm-input {
+  border: 1px solid var(--tm-border);
+  border-radius: var(--tm-radius-md);
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.tm-app-charter .tm-input:hover {
+  border-color: var(--tm-text-muted);
+}
+.tm-app-charter .tm-input:focus {
+  outline: none;
+  border-color: var(--tm-primary);
+  box-shadow: 0 0 0 2px rgba(54, 126, 204, 0.2);
 }
 
 .tm-app {

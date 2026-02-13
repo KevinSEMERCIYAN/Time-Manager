@@ -272,7 +272,10 @@ const autoCloseOpenClocks = async (userIds) => {
     where: { userId: { in: userIds }, clockOutAt: null },
     include: { user: true },
   });
+  const isDevUser = (u) =>
+    process.env.DEV_AUTH === "true" && u.username === (process.env.DEV_AUTH_USER || "dev");
   for (const clock of openClocks) {
+    if (isDevUser(clock.user)) continue; // ne pas auto-clore en dev pour permettre OUT manuel
     const dateKey = clock.date.toISOString().slice(0, 10);
     const sched = scheduleForUser(clock.user);
     const pmEnd = parseTimeOnDate(dateKey, sched.pmEnd);

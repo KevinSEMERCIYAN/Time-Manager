@@ -10,39 +10,36 @@ export function MemberDetailsPage({ ctx }) {
     return (
       <div style={{ marginTop: 20 }}>
         <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Detail employe</h3>
-        <div style={{ fontSize: 13, color: "#6b7280" }}>Utilisateur introuvable.</div>
+        <div className="tm-text-muted" style={{ fontSize: 13 }}>Utilisateur introuvable.</div>
       </div>
     );
   }
 
   return (
     <div style={{ marginTop: 20 }}>
-      <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Detail employe</h3>
+      <h3 style={{ margin: "0 0 8px", fontSize: 16, color: "var(--tm-text-main)" }}>Detail employe</h3>
       <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button onClick={() => saveUser(target)} style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#111827", color: "white" }}>
-          Enregistrer
-        </button>
+        <button type="button" onClick={() => saveUser(target)} className="tm-btn tm-btn-primary">Enregistrer</button>
         {isAdmin && (
-          <button onClick={() => setUserToDelete(target)} style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#fee2e2", color: "#991b1b" }}>
-            Supprimer
-          </button>
+          <button type="button" onClick={() => setUserToDelete(target)} className="tm-btn tm-btn-danger">Supprimer</button>
         )}
       </div>
 
-      <div style={{ padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#fff" }}>
-        <div style={{ fontSize: 12, color: "#6b7280" }}>Utilisateur</div>
-        <div style={{ fontSize: 16, fontWeight: 600 }}>{target.displayName || target.username}</div>
+      <div style={{ padding: "12px 14px", border: "1px solid var(--tm-border)", borderRadius: "var(--tm-radius-md)", background: "var(--tm-surface)" }}>
+        <div className="tm-text-muted">Utilisateur</div>
+        <div style={{ fontSize: 16, fontWeight: 600, color: "var(--tm-text-main)" }}>{target.displayName || target.username}</div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
           <div>
-            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Contrat</div>
+            <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Contrat</div>
             <select
               value={target.contractType || ""}
               onChange={(e) => {
                 const next = users.map((x) => (x.id === target.id ? { ...x, contractType: e.target.value } : x));
                 setUsers(next);
               }}
-              style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #d1d5db", maxWidth: 180 }}
+              className="tm-input"
+              style={{ maxWidth: 180 }}
             >
               <option value="" disabled>Choisir...</option>
               <option value="CDI">CDI</option>
@@ -52,7 +49,7 @@ export function MemberDetailsPage({ ctx }) {
           </div>
 
           <div>
-            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>Jours travailles</div>
+            <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 6 }}>Jours travailles</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {WORKING_DAYS.map((d) => {
                 const current = Array.isArray(target.workingDays)
@@ -79,20 +76,24 @@ export function MemberDetailsPage({ ctx }) {
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
             <div>
-              <div style={{ fontSize: 11, color: "#6b7280" }}>Matin debut</div>
-              <input type="time" value={target.scheduleAmStart || ""} onChange={(e) => setUsers(users.map((x) => (x.id === target.id ? { ...x, scheduleAmStart: e.target.value } : x)))} style={{ width: "100%", padding: "6px 8px", borderRadius: 8, border: "1px solid #d1d5db" }} />
+              <div className="tm-text-muted" style={{ fontSize: 11 }}>Matin debut</div>
+              <input type="time" value={target.scheduleAmStart || ""} onChange={(e) => setUsers(users.map((x) => (x.id === target.id ? { ...x, scheduleAmStart: e.target.value } : x)))} className="tm-input"
+              style={{ width: "100%", padding: "6px 8px" }} />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: "#6b7280" }}>Matin fin</div>
-              <input type="time" value={target.scheduleAmEnd || ""} onChange={(e) => setUsers(users.map((x) => (x.id === target.id ? { ...x, scheduleAmEnd: e.target.value } : x)))} style={{ width: "100%", padding: "6px 8px", borderRadius: 8, border: "1px solid #d1d5db" }} />
+              <div className="tm-text-muted" style={{ fontSize: 11 }}>Matin fin</div>
+              <input type="time" value={target.scheduleAmEnd || ""} onChange={(e) => setUsers(users.map((x) => (x.id === target.id ? { ...x, scheduleAmEnd: e.target.value } : x)))} className="tm-input"
+              style={{ width: "100%", padding: "6px 8px" }} />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: "#6b7280" }}>Apres-midi debut</div>
-              <input type="time" value={target.schedulePmStart || ""} onChange={(e) => setUsers(users.map((x) => (x.id === target.id ? { ...x, schedulePmStart: e.target.value } : x)))} style={{ width: "100%", padding: "6px 8px", borderRadius: 8, border: "1px solid #d1d5db" }} />
+              <div className="tm-text-muted" style={{ fontSize: 11 }}>Apres-midi debut</div>
+              <input type="time" value={target.schedulePmStart || ""} onChange={(e) => setUsers(users.map((x) => (x.id === target.id ? { ...x, schedulePmStart: e.target.value } : x)))} className="tm-input"
+              style={{ width: "100%", padding: "6px 8px" }} />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: "#6b7280" }}>Apres-midi fin</div>
-              <input type="time" value={target.schedulePmEnd || ""} onChange={(e) => setUsers(users.map((x) => (x.id === target.id ? { ...x, schedulePmEnd: e.target.value } : x)))} style={{ width: "100%", padding: "6px 8px", borderRadius: 8, border: "1px solid #d1d5db" }} />
+              <div className="tm-text-muted" style={{ fontSize: 11 }}>Apres-midi fin</div>
+              <input type="time" value={target.schedulePmEnd || ""} onChange={(e) => setUsers(users.map((x) => (x.id === target.id ? { ...x, schedulePmEnd: e.target.value } : x)))} className="tm-input"
+              style={{ width: "100%", padding: "6px 8px" }} />
             </div>
           </div>
         </div>

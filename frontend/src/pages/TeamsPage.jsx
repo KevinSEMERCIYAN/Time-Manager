@@ -5,12 +5,13 @@ export function TeamsPage({ ctx }) {
 
   return (
     <div style={{ marginTop: 20 }}>
-      <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Gestion Teams</h3>
+      <h3 style={{ margin: "0 0 8px", fontSize: 16, color: "var(--tm-text-main)" }}>Gestion Teams</h3>
       {(isAdmin || isManager) && (
         <div style={{ marginBottom: 12 }}>
           <button
+            type="button"
             onClick={() => navigate("/teams/createteam")}
-            style={{ border: "1px solid #e5e7eb", padding: "8px 12px", borderRadius: 8, background: "#2563eb", color: "white" }}
+            className="tm-btn tm-btn-primary"
           >
             Creer une equipe
           </button>
@@ -23,10 +24,10 @@ export function TeamsPage({ ctx }) {
               key={t.id}
               style={{
                 padding: "10px 12px",
-                border: "1px solid #e5e7eb",
-                borderRadius: 8,
+                border: "1px solid var(--tm-border)",
+                borderRadius: "var(--tm-radius-md)",
                 marginBottom: 8,
-                background: "#f9fafb",
+                background: "var(--tm-surface-soft)",
                 fontSize: 13,
                 display: "flex",
                 alignItems: "center",
@@ -34,26 +35,32 @@ export function TeamsPage({ ctx }) {
                 gap: 8,
               }}
             >
-              <div>{t.name}</div>
+              <div style={{ color: "var(--tm-text-main)" }}>{t.name}</div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  onClick={() => openEditTeam(t)}
-                  style={{ border: "1px solid #e5e7eb", padding: "6px 10px", borderRadius: 8, background: "#fff", fontSize: 12 }}
-                >
-                  Modifier
-                </button>
-                <button
-                  onClick={() => setTeamToDelete(t)}
-                  style={{ border: "1px solid #e5e7eb", padding: "6px 10px", borderRadius: 8, background: "#fff", fontSize: 12 }}
-                >
-                  Supprimer
-                </button>
+                <button type="button" onClick={() => openEditTeam(t)} className="tm-btn">Modifier</button>
+                <button type="button" onClick={() => setTeamToDelete(t)} className="tm-btn tm-btn-danger">Supprimer</button>
               </div>
             </div>
           ))}
         </div>
       ) : (
-        <div style={{ fontSize: 13, color: "#6b7280" }}>Aucune equipe.</div>
+        <div
+          className="tm-card"
+          style={{
+            padding: 24,
+            textAlign: "center",
+            color: "var(--tm-text-muted)",
+            fontSize: 13,
+          }}
+          role="status"
+        >
+          <p style={{ margin: 0 }}>Aucune équipe pour le moment.</p>
+          {(isAdmin || isManager) && (
+            <p style={{ marginTop: 8, marginBottom: 0 }}>
+              Cliquez sur &laquo; Creer une equipe &raquo; pour en ajouter une.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

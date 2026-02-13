@@ -24,11 +24,68 @@ module.exports = (ctx) => {
     if (!username || !password) return res.status(400).json({ error: "username/password required" });
 
     const rawUsername = String(username);
-    const normalizedUsername = rawUsername.includes("\\")
+    let normalizedUsername = rawUsername.includes("\\")
       ? rawUsername.split("\\").pop()
       : rawUsername.includes("@")
         ? rawUsername.split("@")[0]
         : rawUsername;
+
+    // Mode dev : connexion sans LDAP (uniquement si DEV_AUTH=true)
+    const devAuthEnabled = process.env.DEV_AUTH === "true" || process.env.DEV_AUTH === "1";
+    const devUser = process.env.DEV_AUTH_USER || "dev";
+    const devPassword = process.env.DEV_AUTH_PASSWORD || "dev";
+    if (devAuthEnabled && normalizedUsername === devUser && password === devPassword) {
+      const displayName = process.env.DEV_AUTH_DISPLAY_NAME || "Utilisateur Dev";
+      const devSchedule = {
+        contractType: "CDI",
+        scheduleAmStart: "08:00",
+        scheduleAmEnd: "12:00",
+        schedulePmStart: "14:00",
+        schedulePmEnd: "18:00",
+        workingDays: [1, 2, 3, 4, 5],
+      };
+      const user = await prisma.user.upsert({
+        where: { username: normalizedUsername },
+        update: {
+          displayName,
+          roles: ["ADMIN", "MANAGER"],
+          isProvisioned: true,
+          isActive: true,
+          isDeleted: false,
+          ...devSchedule,
+        },
+        create: {
+          username: normalizedUsername,
+          displayName,
+          roles: ["ADMIN", "MANAGER"],
+          isProvisioned: true,
+          isDeleted: false,
+          ...devSchedule,
+        },
+      });
+      const refreshToken = createRefreshToken();
+      const refreshTokenHash = hashToken(refreshToken);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { refreshTokenHash },
+      });
+      const accessToken = signAccessToken({ id: user.id, username: user.username, roles: user.roles || [] });
+      setAuthCookies(res, accessToken, refreshToken);
+      await audit({
+        actorUserId: user.id,
+        action: "LOGIN",
+        targetType: "User",
+        targetId: user.id,
+      });
+      return res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName,
+          roles: user.roles || [],
+        },
+      });
+    }
 
     const BASE_DN = process.env.LDAP_BASE_DN;
     const BIND_DN = process.env.LDAP_BIND_DN;

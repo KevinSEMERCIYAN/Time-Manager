@@ -9,6 +9,7 @@ import { ClockModal } from "../components/modals/ClockModal";
 import { ConfirmModal } from "../components/modals/ConfirmModal";
 import { EditTeamModal } from "../components/modals/EditTeamModal";
 import { ErrorToast } from "../components/feedback/ErrorToast";
+import { SuccessToast } from "../components/feedback/SuccessToast";
 import { ROUTES, isMemberDetailsRoute, isProtectedRoute } from "./config/routes";
 import { LandingPage } from "../pages/LandingPage";
 import { LoginPage } from "../pages/LoginPage";
@@ -19,6 +20,7 @@ import { MemberDetailsPage } from "../pages/MemberDetailsPage";
 import { TeamsPage } from "../pages/TeamsPage";
 import { CreateTeamPage } from "../pages/CreateTeamPage";
 import { ProfilePage } from "../pages/ProfilePage";
+import { MyClocksPage } from "../pages/MyClocksPage";
 
 export default function App() {
   const [route, setRoute] = useState(window.location.pathname || ROUTES.LANDING);
@@ -27,6 +29,7 @@ export default function App() {
   const [teams, setTeams] = useState([]);
   const [users, setUsers] = useState([]);
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -43,8 +46,14 @@ export default function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [teamReport, setTeamReport] = useState(null);
   const [userReport, setUserReport] = useState(null);
+  const [teamReportLoading, setTeamReportLoading] = useState(false);
+  const [userReportLoading, setUserReportLoading] = useState(false);
   const [reportTeamId, setReportTeamId] = useState("");
   const [reportUserId, setReportUserId] = useState("");
+  const [seedLoading, setSeedLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [syncAdLoading, setSyncAdLoading] = useState(false);
+  const [exportCsvLoading, setExportCsvLoading] = useState(false);
 
   const [teamToDelete, setTeamToDelete] = useState(null);
   const [teamToEdit, setTeamToEdit] = useState(null);
@@ -69,6 +78,7 @@ export default function App() {
   const [assignNow, setAssignNow] = useState(false);
   const [createTeamId, setCreateTeamId] = useState("");
   const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
+  const [createTeamLoading, setCreateTeamLoading] = useState(false);
 
   const roles = user?.roles || [];
   const isAdmin = roles.includes("ADMIN");
@@ -174,20 +184,28 @@ export default function App() {
   const loadTeamReport = async () => {
     if (!reportTeamId || !report?.from || !report?.to) return;
     try {
+      setTeamReportLoading(true);
+      setError("");
       const data = await apiFetch(`/reports/team?from=${report.from}&to=${report.to}&teamId=${reportTeamId}`);
       setTeamReport(data);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setTeamReportLoading(false);
     }
   };
 
   const loadUserReport = async () => {
     if (!reportUserId || !report?.from || !report?.to) return;
     try {
+      setUserReportLoading(true);
+      setError("");
       const data = await apiFetch(`/reports/user?from=${report.from}&to=${report.to}&userId=${reportUserId}`);
       setUserReport(data);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setUserReportLoading(false);
     }
   };
 
@@ -261,7 +279,10 @@ export default function App() {
   };
 
   const exportCsv = async () => {
+    if (exportCsvLoading) return;
     try {
+      setExportCsvLoading(true);
+      setError("");
       const from = report?.from;
       const to = report?.to;
       const query = from && to ? `?from=${from}&to=${to}` : "";
@@ -275,35 +296,56 @@ export default function App() {
       a.download = "timemanager-export.csv";
       a.click();
       URL.revokeObjectURL(url);
+      setSuccessMessage("Export CSV téléchargé.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setExportCsvLoading(false);
     }
   };
 
   const resetData = async () => {
+    if (resetLoading) return;
     try {
+      setResetLoading(true);
+      setError("");
       await apiFetch("/admin/reset", { method: "POST" });
       await Promise.all([loadDashboard(), loadTeams(), loadUsers()]);
+      setSuccessMessage("Données réinitialisées.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setResetLoading(false);
     }
   };
 
   const seedData = async () => {
+    if (seedLoading) return;
     try {
+      setSeedLoading(true);
+      setError("");
       await apiFetch("/admin/seed", { method: "POST" });
       await loadDashboard();
+      setSuccessMessage("Pointages générés.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSeedLoading(false);
     }
   };
 
   const syncAdUsers = async () => {
+    if (syncAdLoading) return;
     try {
+      setSyncAdLoading(true);
+      setError("");
       await apiFetch("/admin/sync-ad", { method: "POST" });
       await loadUsers();
+      setSuccessMessage("Synchronisation AD terminée.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSyncAdLoading(false);
     }
   };
 
@@ -328,6 +370,8 @@ export default function App() {
         }),
       });
       await loadUsers();
+      setError("");
+      setSuccessMessage("Utilisateur enregistré.");
       navigate(ROUTES.MEMBERS);
     } catch (err) {
       setError(err.message);
@@ -364,6 +408,8 @@ export default function App() {
       setCreateSchedule({ amStart: "", amEnd: "", pmStart: "", pmEnd: "" });
       setAssignNow(false);
       setCreateTeamId("");
+      setError("");
+      setSuccessMessage("Utilisateur créé.");
       await loadUsers();
       navigate(ROUTES.MEMBERS);
     } catch (err) {
@@ -402,6 +448,8 @@ export default function App() {
         }),
       });
       setTeamToEdit(null);
+      setError("");
+      setSuccessMessage("Équipe mise à jour.");
       await loadTeams();
     } catch (err) {
       setError(err.message);
@@ -421,6 +469,8 @@ export default function App() {
   const createTeam = async () => {
     const name = newTeamName.trim();
     if (!name) return;
+    setCreateTeamLoading(true);
+    setError("");
     try {
       await apiFetch("/teams", {
         method: "POST",
@@ -435,10 +485,14 @@ export default function App() {
       setNewTeamDescription("");
       setSelectedMembers([]);
       setSelectedManagerId("");
+      setError("");
+      setSuccessMessage("Équipe créée.");
       navigate(ROUTES.TEAMS);
       await loadTeams();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setCreateTeamLoading(false);
     }
   };
 
@@ -503,6 +557,8 @@ export default function App() {
     isManager,
     error,
     setError,
+    successMessage,
+    setSuccessMessage,
     loading,
     username,
     setUsername,
@@ -529,6 +585,8 @@ export default function App() {
     setReportUserId,
     loadTeamReport,
     loadUserReport,
+    teamReportLoading,
+    userReportLoading,
     teamReport,
     userReport,
     renderSparkline,
@@ -536,7 +594,11 @@ export default function App() {
     exportCsv,
     resetData,
     seedData,
+    seedLoading,
+    resetLoading,
+    syncAdLoading,
     syncAdUsers,
+    exportCsvLoading,
     createSearch,
     setCreateSearch,
     createUserId,
@@ -571,6 +633,7 @@ export default function App() {
     managerDropdownOpen,
     setManagerDropdownOpen,
     createTeam,
+    createTeamLoading,
     openEditTeam,
     setTeamToDelete,
     apiFetch,
@@ -588,6 +651,8 @@ export default function App() {
     content = <LoginPage ctx={appCtx} />;
   } else if (route === ROUTES.DASHBOARD) {
     content = withShell(<DashboardPage ctx={appCtx} />, { showFilters: true, showUserPanel: true });
+  } else if (route === ROUTES.MY_CLOCKS) {
+    content = withShell(<MyClocksPage ctx={appCtx} />, { showFilters: false, showUserPanel: true });
   } else if (route === ROUTES.PROFILE) {
     content = withShell(<ProfilePage ctx={appCtx} />);
   } else if (route === ROUTES.MEMBERS) {
@@ -605,22 +670,20 @@ export default function App() {
   const isWideLayout = route === ROUTES.SIGN_IN || route === ROUTES.LANDING;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f4f6fb", padding: 24, fontFamily: "Arial, sans-serif" }}>
+    <div className="tm-app-charter">
       <div
+        className="tm-card"
         style={{
           maxWidth: isWideLayout ? 620 : 1100,
           margin: isWideLayout ? "80px auto" : "40px auto",
-          background: "white",
-          borderRadius: 12,
           padding: isWideLayout ? "28px 36px" : 28,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 24 }}>TimeManager</h1>
-        <p style={{ marginTop: 6, color: "#6b7280" }}>
+        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: "var(--tm-text-main)" }}>TimeManager</h1>
+        <p className="tm-text-muted" style={{ marginTop: 6 }}>
           {route === ROUTES.SIGN_IN || route === ROUTES.LANDING ? "Connexion via Windows Server (LDAPS)" : "Tableau de bord"}
         </p>
-        {authLoading ? <div style={{ fontSize: 13, color: "#6b7280" }}>Chargement...</div> : content}
+        {authLoading ? <div className="tm-text-muted" style={{ fontSize: 13 }}>Chargement...</div> : content}
       </div>
 
       <ClockModal
@@ -665,6 +728,7 @@ export default function App() {
       />
 
       <ErrorToast error={error} />
+      <SuccessToast message={successMessage} onDismiss={() => setSuccessMessage("")} />
     </div>
   );
 }
