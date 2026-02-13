@@ -268,8 +268,3 @@ A ignorer dans `.gitignore` :
 - `*.log`
 - volumes DB locaux
 
----
-
-## 14. Licence
-
-A definir.
