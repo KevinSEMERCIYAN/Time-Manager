@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum ContractType {
+  CDI
+  CDD
+  STAGE
+}
+
+enum ClockSource {
+  manual
+  auto
+}
+
+model User {
+  id               String         @id @default(uuid())
+  username         String         @unique
+  displayName      String
+  firstName        String?
+  lastName         String?
+  email            String?
+  phone            String?
+  roles            Json
+  contractType     ContractType?
+  scheduleAmStart  String?
+  scheduleAmEnd    String?
+  schedulePmStart  String?
+  schedulePmEnd    String?
+  workingDays      Json?
+  graceMinutes     Int?           @default(15)
+  isActive         Boolean        @default(true)
+  isDeleted        Boolean        @default(false)
+  isProvisioned    Boolean        @default(false)
+  adDn             String?
+  refreshTokenHash String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  teams            TeamMember[]
+  managedTeams     Team[]         @relation("TeamManager")
+  clocks           Clock[]
+  auditLogs        AuditLog[]     @relation("AuditActor")
+}
+
+model Team {
+  id            String       @id @default(uuid())
+  name          String       @unique
+  description   String?
+  managerUserId String?
+  manager       User?        @relation("TeamManager", fields: [managerUserId], references: [id])
+  members       TeamMember[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  userId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model Clock {
+  id            String      @id @default(uuid())
+  userId        String
+  date          DateTime
+  clockInAt     DateTime
+  clockOutAt    DateTime?
+  lateMinutes   Int         @default(0)
+  workedMinutes Int         @default(0)
+  source        ClockSource @default(manual)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([userId, date])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorUserId String?
+  action     String
+  targetType String?
+  targetId   String?
+  meta       Json?
+  actor      User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([actorUserId])
+}

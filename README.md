@@ -9,9 +9,14 @@
 **TimeManager** est une application déployée via une **stack Docker complète**, prête à l’emploi.  
 Elle regroupe l’ensemble des services nécessaires au fonctionnement de l’application dans un environnement **isolé** et **reproductible**.
 
+**Principes d’architecture**  
+- **Active Directory** = authentification + groupes (source d’identité et de rôles).  
+- **Backend API** = vérité métier (users/teams/clocks/reports) + RBAC + audit + DB.  
+- **Frontend** = UI qui consomme l’API (pas de règles critiques ni de données métier en `localStorage`).
+
 ### 🔧 Services inclus
 - **MariaDB** – Base de données  
-- **Backend** – API applicative  
+- **Backend** – API applicative + RBAC + audit + Prisma  
 - **Frontend** – Interface utilisateur  
 - **Nginx** – Reverse-proxy  
 - **Mailpit** – Serveur SMTP de test  
@@ -85,21 +90,31 @@ chmod +x bootstrap.sh
 
 🔐 Configuration (.env)
 
+DATABASE_URL=mysql://timemanager:timemanager@db:3306/timemanager
+SHADOW_DATABASE_URL=mysql://root:root@db:3306/timemanager_shadow
 DB_HOST=db
 DB_PORT=3306
 DB_NAME=timemanager
-DB_USER=tm
-DB_PASS=tmpass
+DB_USER=timemanager
+DB_PASS=timemanager
 DB_ROOT_PASSWORD=rootpass
 
 JWT_SECRET=CHANGE_ME
 JWT_TTL_MINUTES=15
+REFRESH_TTL_DAYS=14
+COOKIE_SECURE=false
 
 LDAP_URL=ldaps://AD-01.primebank.local:636
 LDAP_BASE_DN=DC=primebank,DC=local
 LDAP_BIND_DN=CN=svc_ldap_reader,OU=Utilisateurs,DC=primebank,DC=local
 LDAP_BIND_PASSWORD=CHANGE_ME
 LDAP_USER_FILTER=(sAMAccountName={{username}})
+AD_DERIVE_TEAM=false
+LDAP_USERS_BASE_DN=OU=Utilisateurs,DC=primebank,DC=local
+LDAP_USERS_FILTER=(&(objectClass=user)(!(objectClass=computer)))
+LDAP_SYNC_EXCLUDE_USERS=svc_timemanager,svc_ldap_reader
+AD_SYNC_ENABLED=true
+AD_SYNC_INTERVAL_MINUTES=2
 
 MAIL_HOST=mailpit
 MAIL_PORT=1025
@@ -116,6 +131,37 @@ MAIL_FROM=no-reply@primebank.local
 ▶️ Démarrage manuel
 
 docker compose up -d --build
+
+📦 Migrations Prisma (obligatoire au 1er lancement)
+
+```bash
+docker compose exec backend npx prisma migrate deploy
+```
+
+Si `migrate dev` échoue (permissions), utilisez `db push` ou configurez `SHADOW_DATABASE_URL` :
+
+```bash
+docker compose exec backend npx prisma db push --schema /app/prisma/schema.prisma
+```
+
+🔁 Synchronisation AD → MariaDB
+
+- Automatique toutes les 2 minutes (configurable) via `AD_SYNC_ENABLED` et `AD_SYNC_INTERVAL_MINUTES`.
+- Exécution manuelle (admin) :
+
+```bash
+curl -X POST http://localhost:8080/api/admin/sync-ad
+```
+
+🧹 Suppression côté application
+
+- Quand un admin supprime un utilisateur, il est **désactivé uniquement dans MariaDB** (`isDeleted=true`, `isActive=false`).
+- La synchronisation AD **ne réactive pas** les comptes supprimés localement.
+
+✅ Provisioning (profil applicatif)
+
+- Les comptes AD **ne peuvent pas se connecter** tant que leur profil applicatif n’est pas créé.
+- Un admin/manager doit **provisionner** l’utilisateur via l’interface “Créer un utilisateur”.
 
 🧰 Gestion des conteneurs
 
@@ -178,3 +224,38 @@ Production :
 📄 Licence
 
 À définir.
+
+---
+
+## ✅ Compléments techniques
+
+### Champs utilisateur
+- `firstName`, `lastName`, `email`, `phone`
+
+### Champs équipe
+- `description`
+
+### GDPR
+- `GET /gdpr/export`
+- `POST /gdpr/anonymize`
+
+### Tests
+```bash
+cd backend
+npm run test
+npm run test:coverage
+```
+
+### CI/CD
+- `.github/workflows/ci.yml`
+
+### ADRs
+- `docs/adr/0001-architecture.md`
+- `docs/adr/0002-api-design.md`
+- `docs/adr/0003-reverse-proxy.md`
+- `docs/adr/0004-tech-stack.md`
+
+### Prod
+- `compose.prod.yml`
+- `nginx/conf.d/app.prod.conf`
+- Certificats TLS dans `./certs`
