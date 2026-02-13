@@ -1,17 +1,29 @@
-import React from "react";
+import React, { useState } from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
-import "./styles.css";
 import { ManagerDashboard } from "./ManagerDashboard";
-
-// Illustration de droite sur l'écran de connexion.
-// Place le fichier tel quel dans frontend/public/assets/
-// avec son nom d'origine : "ChatGPT Image 3 févr. 2026, 15_05_08.png"
-const ILLUSTRATION_SRC =
-  "/assets/ChatGPT Image 3 févr. 2026, 15_05_08.png";
+import { AdminDashboard } from "./AdminDashboard";
+import { AdminHome } from "./AdminHome";
+import "./styles.css";
 
 function LoginPage() {
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+
+    if (email === "admin@bank.com" && password === "admin123") {
+      navigate("/admin"); // redirige vers AdminHome
+    } else if (email === "manager@bank.com" && password === "manager123") {
+      navigate("/manager"); // redirige vers ManagerDashboard
+    } else {
+      alert("Email ou mot de passe incorrect");
+    }
+  };
+
   return (
     <div className="tm-app">
       <div className="tm-login-card">
@@ -32,37 +44,35 @@ function LoginPage() {
               Connectez-vous à votre compte
             </p>
 
-            <form className="tm-form">
+            <form className="tm-form" onSubmit={handleSubmit}>
               <div className="tm-form-field">
-                <label htmlFor="email" className="tm-label">
-                  Email
-                </label>
+                <label htmlFor="email" className="tm-label">Email</label>
                 <div className="tm-input-wrapper">
-                  <span className="tm-input-icon">
-                    <Mail size={16} />
-                  </span>
+                  <Mail size={16} />
                   <input
                     id="email"
                     type="email"
                     placeholder="exemple@email.com"
                     className="tm-input"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
                   />
                 </div>
               </div>
 
               <div className="tm-form-field">
-                <label htmlFor="password" className="tm-label">
-                  Mot de passe
-                </label>
+                <label htmlFor="password" className="tm-label">Mot de passe</label>
                 <div className="tm-input-wrapper">
-                  <span className="tm-input-icon">
-                    <Lock size={16} />
-                  </span>
+                  <Lock size={16} />
                   <input
                     id="password"
                     type="password"
                     placeholder="••••••••"
                     className="tm-input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
                   />
                 </div>
               </div>
@@ -70,28 +80,8 @@ function LoginPage() {
               <button type="submit" className="tm-button-primary">
                 Se connecter
               </button>
-
-              <button type="button" className="tm-link-button">
-                Mot de passe oublié ?
-              </button>
             </form>
-
-            <p className="tm-login-footer-text">
-              Besoin d&apos;aide ?{" "}
-              <button type="button" className="tm-link-inline">
-                Contactez l&apos;assistance
-              </button>
-            </p>
           </section>
-
-          <aside className="tm-login-illustration">
-            <div className="tm-illustration-circle" />
-            <img
-              src={ILLUSTRATION_SRC}
-              alt="Employé travaillant sur un ordinateur avec une horloge"
-              className="tm-illustration-image"
-            />
-          </aside>
         </main>
       </div>
     </div>
@@ -104,9 +94,12 @@ function App() {
       <Routes>
         <Route path="/" element={<LoginPage />} />
         <Route path="/manager" element={<ManagerDashboard />} />
+        <Route path="/admin/users" element={<AdminDashboard />} />
+        <Route path="/admin" element={<AdminHome />} />
       </Routes>
     </BrowserRouter>
   );
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+

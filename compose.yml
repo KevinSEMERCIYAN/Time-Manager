@@ -33,7 +33,7 @@ services:
   reverse-proxy:
     image: nginx:alpine
     ports:
-      - "8080:80"
+      - "8081:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     depends_on:
