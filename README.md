@@ -1,261 +1,275 @@
 # ⏱️ TimeManager
 
-## Installation complète – Stack Docker
+Application de pointage et gestion d'equipes, avec authentification Active Directory (LDAPS), backend Node/Express, frontend React, et deploiement Docker.
 
 ---
 
-## 📌 Présentation
+## 1. Architecture
 
-**TimeManager** est une application déployée via une **stack Docker complète**, prête à l’emploi.  
-Elle regroupe l’ensemble des services nécessaires au fonctionnement de l’application dans un environnement **isolé** et **reproductible**.
+- Active Directory : identite + groupes (source des roles)
+- Backend API : logique metier, RBAC, audit, persistance
+- Frontend : interface utilisateur (pas de regles critiques en local)
 
-**Principes d’architecture**  
-- **Active Directory** = authentification + groupes (source d’identité et de rôles).  
-- **Backend API** = vérité métier (users/teams/clocks/reports) + RBAC + audit + DB.  
-- **Frontend** = UI qui consomme l’API (pas de règles critiques ni de données métier en `localStorage`).
-
-### 🔧 Services inclus
-- **MariaDB** – Base de données  
-- **Backend** – API applicative + RBAC + audit + Prisma  
-- **Frontend** – Interface utilisateur  
-- **Nginx** – Reverse-proxy  
-- **Mailpit** – Serveur SMTP de test  
-
-👉 L’installation est **entièrement automatisée** grâce à un script de **bootstrap**.
+### Services Docker
+- `db` : MariaDB
+- `backend` : API Express + Prisma
+- `frontend` : React + Vite
+- `reverse-proxy` : Nginx
+- `mailpit` : SMTP de test (dev)
 
 ---
 
-## ⚙️ Prérequis
+## 2. Prerequis
 
-Avant de commencer, assurez-vous que les éléments suivants sont installés sur la machine :
+- Docker
+- Docker Compose plugin (`docker compose`)
+- Acces internet (pull images)
 
-- Docker  
-- Docker Compose (`docker compose` ou `docker-compose`)  
-- Accès Internet (pull des images Docker)
+Verification :
 
-### 🔍 Vérification
 ```bash
 docker --version
 docker compose version
 ```
 
-📥 Récupération du projet
+---
 
+## 3. Installation
+
+### 3.1 Cloner le projet
+
+```bash
 git clone <URL_DU_DEPOT>
 cd timemanager
+```
 
-🚀 Installation automatique (recommandée)
+### 3.2 Installation automatique (recommandee)
 
-Le script bootstrap.sh effectue automatiquement :
+Le script `bootstrap.sh` :
+- verifie les prerequis
+- prepare `.env` minimal si absent
+- build et demarre la stack
+- applique `prisma migrate deploy`
+- supporte dev et prod avec des projets Docker separes
 
-    Création de l’arborescence du projet
-
-    Génération du fichier .env
-
-    Génération du fichier compose.yml
-
-    Génération de la configuration Nginx
-
-    Build et démarrage des conteneurs Docker
-
-▶️ Lancer l’installation
-
+```bash
 chmod +x bootstrap.sh
-./bootstrap.sh
+./bootstrap.sh --dev
+```
 
-🌐 Accès aux services
+Options utiles :
 
-    Application TimeManager :
-    http://timemanager.primebank.local:8080/
+```bash
+./bootstrap.sh --prod
+./bootstrap.sh --dev --no-build
+./bootstrap.sh --prod --no-migrate
+./bootstrap.sh --help
+```
 
-    Interface Mailpit (emails) :
-    http://timemanager.primebank.local:8025/
+### 3.3 Installation manuelle
 
-📁 Arborescence du projet
+```bash
+# dev
+docker compose -p timemanager-dev -f compose.yml up -d --build
 
-.
-├── backend/
-│   ├── Dockerfile
-│   └── src/
-├── frontend/
-│   ├── Dockerfile
-│   └── src/
-├── nginx/
-│   └── conf.d/
-│       └── app.conf
-├── .env
-├── compose.yml
-├── bootstrap.sh
-└── README.md
+docker compose -p timemanager-dev -f compose.yml exec backend npx prisma migrate deploy
 
-🔐 Configuration (.env)
+# prod
+docker compose -p timemanager-prod -f compose.prod.yml up -d --build
 
-DATABASE_URL=mysql://timemanager:timemanager@db:3306/timemanager
-SHADOW_DATABASE_URL=mysql://root:root@db:3306/timemanager_shadow
-DB_HOST=db
-DB_PORT=3306
-DB_NAME=timemanager
-DB_USER=timemanager
-DB_PASS=timemanager
-DB_ROOT_PASSWORD=rootpass
+docker compose -p timemanager-prod -f compose.prod.yml exec backend npx prisma migrate deploy
+```
 
+---
+
+## 4. Acces aux services
+
+### Dev
+- Application : `http://localhost:8080`
+- Mailpit : `http://localhost:8025`
+
+### Prod
+- HTTP : `http://localhost`
+- HTTPS : `https://localhost`
+
+Si vous utilisez un nom DNS interne (ex. `timemanager.primebank.local`), mappez-le vers l'IP du serveur.
+
+---
+
+## 5. Configuration
+
+### 5.1 Fichiers
+- `.env`
+- `compose.yml`
+- `compose.prod.yml`
+- `nginx/conf.d/app.conf`
+- `nginx/conf.d/app.prod.conf.disabled`
+
+### 5.2 Variables importantes (`.env`)
+
+```env
+# Secrets
 JWT_SECRET=CHANGE_ME
-JWT_TTL_MINUTES=15
-REFRESH_TTL_DAYS=14
-COOKIE_SECURE=false
+LDAP_BIND_PASSWORD=CHANGE_ME
 
+# LDAP
 LDAP_URL=ldaps://AD-01.primebank.local:636
 LDAP_BASE_DN=DC=primebank,DC=local
-LDAP_BIND_DN=CN=svc_ldap_reader,OU=Utilisateurs,DC=primebank,DC=local
-LDAP_BIND_PASSWORD=CHANGE_ME
+LDAP_BIND_DN=svc_ldap_reader@primebank.local
 LDAP_USER_FILTER=(sAMAccountName={{username}})
-AD_DERIVE_TEAM=false
-LDAP_USERS_BASE_DN=OU=Utilisateurs,DC=primebank,DC=local
-LDAP_USERS_FILTER=(&(objectClass=user)(!(objectClass=computer)))
-LDAP_SYNC_EXCLUDE_USERS=svc_timemanager,svc_ldap_reader
+LDAP_TLS_SERVERNAME=AD-01.primebank.local
+LDAP_DIRECT_BIND=true
+LDAP_UPN_DOMAIN=primebank.local
 AD_SYNC_ENABLED=true
 AD_SYNC_INTERVAL_MINUTES=2
 
-MAIL_HOST=mailpit
-MAIL_PORT=1025
-MAIL_FROM=no-reply@primebank.local
-
-⚠️ Important
-
-    Modifier JWT_SECRET
-
-    Modifier LDAP_BIND_PASSWORD si LDAP activé
-
-    Ne jamais commiter le fichier .env
-
-▶️ Démarrage manuel
-
-docker compose up -d --build
-
-📦 Migrations Prisma (obligatoire au 1er lancement)
-
-```bash
-docker compose exec backend npx prisma migrate deploy
+# DB
+MARIADB_ROOT_PASSWORD=CHANGE_ME
+MARIADB_PASSWORD=CHANGE_ME
 ```
 
-Si `migrate dev` échoue (permissions), utilisez `db push` ou configurez `SHADOW_DATABASE_URL` :
+### 5.3 Important
+- Changer `JWT_SECRET`
+- Changer `LDAP_BIND_PASSWORD`
+- Ne jamais commiter `.env`
+
+---
+
+## 6. Nginx / Reverse proxy
+
+### Dev (`compose.yml`)
+- monte `./nginx/conf.d` dans Nginx
+- expose `8080:80`
+- routes :
+  - `/` -> frontend
+  - `/api/` -> backend
+
+### Prod (`compose.prod.yml`)
+- monte `./nginx/conf.d/app.prod.conf.disabled` vers `/etc/nginx/conf.d/default.conf`
+- monte `./certs`
+- exige :
+  - `certs/timemanager.crt`
+  - `certs/timemanager.key`
+
+---
+
+## 7. Prisma / Base de donnees
+
+Commande recommandee :
 
 ```bash
-docker compose exec backend npx prisma db push --schema /app/prisma/schema.prisma
+npx prisma migrate deploy
 ```
 
-🔁 Synchronisation AD → MariaDB
+Commande de secours (dev/test) :
 
-- Automatique toutes les 2 minutes (configurable) via `AD_SYNC_ENABLED` et `AD_SYNC_INTERVAL_MINUTES`.
-- Exécution manuelle (admin) :
+```bash
+npx prisma db push --schema /app/prisma/schema.prisma
+```
+
+---
+
+## 8. Fonctionnel
+
+### 8.1 Roles
+- `ADMIN` : global
+- `MANAGER` : perimetre/equipe
+- `EMPLOYEE` : personnel
+
+### 8.2 Provisioning
+Un compte AD doit etre provisionne (`isProvisioned=true`) avant connexion, sauf admin.
+
+### 8.3 Sync AD
+- automatique (intervalle configurable)
+- manuelle :
 
 ```bash
 curl -X POST http://localhost:8080/api/admin/sync-ad
 ```
 
-🧹 Suppression côté application
-
-- Quand un admin supprime un utilisateur, il est **désactivé uniquement dans MariaDB** (`isDeleted=true`, `isActive=false`).
-- La synchronisation AD **ne réactive pas** les comptes supprimés localement.
-
-✅ Provisioning (profil applicatif)
-
-- Les comptes AD **ne peuvent pas se connecter** tant que leur profil applicatif n’est pas créé.
-- Un admin/manager doit **provisionner** l’utilisateur via l’interface “Créer un utilisateur”.
-
-🧰 Gestion des conteneurs
-
-docker compose ps
-docker compose logs -f
-docker compose down
-docker compose down -v
-
-🔁 Reverse-proxy Nginx
-
-    / → Frontend
-
-    /api/ → Backend
-
-/api/...
-
-✉️ Emails – Mailpit
-
-    SMTP : mailpit:1025
-
-    Interface web : http://localhost:8025
-
-🔐 LDAP (optionnel)
-
-    Vérifier la résolution DNS
-
-    Vérifier l’accès au port 636
-
-    Vérifier les certificats LDAPS
-
-    Vérifier le filtre LDAP
-
-🛠️ Dépannage rapide
-
-docker compose logs backend
-docker compose down -v
-docker compose up -d --build
-
-📌 Bonnes pratiques Git
-
-.env
-db-data/
-node_modules/
-dist/
-*.log
-
-🏁 Environnement cible
-
-Développement / Recette
-Non exposé directement à Internet
-
-Production :
-
-    HTTPS
-
-    Gestion des secrets
-
-    Build frontend statique
-
-📄 Licence
-
-À définir.
-
----
-
-## ✅ Compléments techniques
-
-### Champs utilisateur
-- `firstName`, `lastName`, `email`, `phone`
-
-### Champs équipe
-- `description`
-
-### GDPR
+### 8.4 RGPD
 - `GET /gdpr/export`
 - `POST /gdpr/anonymize`
 
-### Tests
+---
+
+## 9. Routes UI
+
+- `/`
+- `/sign-in`
+- `/dashboard`
+- `/profile`
+- `/members`
+- `/members/:id`
+- `/members/create`
+- `/teams`
+- `/teams/createteam`
+
+---
+
+## 10. Gestion des conteneurs
+
+### Dev
+
+```bash
+docker compose -p timemanager-dev -f compose.yml ps
+docker compose -p timemanager-dev -f compose.yml logs -f
+docker compose -p timemanager-dev -f compose.yml down
+docker compose -p timemanager-dev -f compose.yml down -v
+```
+
+### Prod
+
+```bash
+docker compose -p timemanager-prod -f compose.prod.yml ps
+docker compose -p timemanager-prod -f compose.prod.yml logs -f
+docker compose -p timemanager-prod -f compose.prod.yml down
+docker compose -p timemanager-prod -f compose.prod.yml down -v
+```
+
+---
+
+## 11. Tests et CI
+
+### Backend
+
 ```bash
 cd backend
+npm ci
 npm run test
 npm run test:coverage
 ```
 
-### CI/CD
-- `.github/workflows/ci.yml`
+### CI
+- Workflow : `.github/workflows/ci.yml`
+- Le pipeline execute :
+  - `cd backend && npm ci`
+  - `cd backend && npm run test:coverage`
 
-### ADRs
+---
+
+## 12. Documentation
+
+- `docs_functionnelle_technique.md`
+- `docs/a11y.md`
 - `docs/adr/0001-architecture.md`
 - `docs/adr/0002-api-design.md`
 - `docs/adr/0003-reverse-proxy.md`
 - `docs/adr/0004-tech-stack.md`
 
-### Prod
-- `compose.prod.yml`
-- `nginx/conf.d/app.prod.conf`
-- Certificats TLS dans `./certs`
+---
+
+## 13. Bonnes pratiques Git
+
+A ignorer dans `.gitignore` :
+- `.env`
+- `node_modules/`
+- `dist/`
+- `*.log`
+- volumes DB locaux
+
+---
+
+## 14. Licence
+
+A definir.
