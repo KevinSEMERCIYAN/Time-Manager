@@ -24,6 +24,7 @@ export function MemberCreatePage({ ctx }) {
     createTeamId,
     setCreateTeamId,
     provisionUser,
+    provisionLoading,
   } = ctx;
 
   const candidates = users.filter((u) => u.isActive !== false || u.isDeleted).filter((u) => !u.isProvisioned || u.isDeleted);
@@ -37,8 +38,8 @@ export function MemberCreatePage({ ctx }) {
     <div style={{ marginTop: 20 }}>
       <h3 style={{ margin: "0 0 8px", fontSize: 16, color: "var(--tm-text-main)" }}>Creer un utilisateur</h3>
       <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button type="button" onClick={provisionUser} disabled={!createUserId} className="tm-btn tm-btn-primary" style={{ opacity: createUserId ? 1 : 0.6 }}>
-          Enregistrer
+        <button type="button" onClick={provisionUser} disabled={!createUserId || provisionLoading} className="tm-btn tm-btn-primary" style={{ opacity: createUserId && !provisionLoading ? 1 : 0.6 }}>
+          {provisionLoading ? "Enregistrement…" : "Enregistrer"}
         </button>
       </div>
 

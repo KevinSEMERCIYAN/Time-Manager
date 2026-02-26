@@ -79,6 +79,7 @@ export default function App() {
   const [createTeamId, setCreateTeamId] = useState("");
   const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
   const [createTeamLoading, setCreateTeamLoading] = useState(false);
+  const [provisionLoading, setProvisionLoading] = useState(false);
 
   const roles = user?.roles || [];
   const isAdmin = roles.includes("ADMIN");
@@ -166,13 +167,17 @@ export default function App() {
     const custom = rangeStart && rangeEnd;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const rawFrom = custom ? rangeStart : start.toISOString().slice(0, 10);
-    const rawTo = custom ? rangeEnd : end.toISOString().slice(0, 10);
+    const toYMD = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const rawFrom = custom ? rangeStart : toYMD(start);
+    const rawTo = custom ? rangeEnd : toYMD(end);
     const toDate = new Date(`${rawTo}T00:00:00`);
     const safeTo = toDate > today ? today.toISOString().slice(0, 10) : rawTo;
 
     try {
-      const data = await apiFetch(`/reports?from=${rawFrom}&to=${safeTo}`);
+      const q = new URLSearchParams({ from: rawFrom, to: safeTo });
+      if (user?.id) q.set("userId", user.id);
+      const data = await apiFetch(`/reports?${q.toString()}`);
       setReport({ ...data.summary, from: rawFrom, to: safeTo });
     } catch (err) {
       setError(err.message);
@@ -380,8 +385,10 @@ export default function App() {
   };
 
   const provisionUser = async () => {
-    if (!createUserId) return;
+    if (!createUserId || provisionLoading) return;
     try {
+      setProvisionLoading(true);
+      setError("");
       const selected = users.find((u) => u.id === createUserId);
       await apiFetch(`/users/${createUserId}/provision`, {
         method: "POST",
@@ -412,6 +419,22 @@ export default function App() {
       setSuccessMessage("Utilisateur créé.");
       await loadUsers();
       navigate(ROUTES.MEMBERS);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProvisionLoading(false);
+    }
+  };
+
+  const impersonateUser = async (targetUserId) => {
+    if (!targetUserId) return;
+    try {
+      setError("");
+      const data = await apiFetch(`/admin/impersonate/${targetUserId}`, { method: "POST" });
+      setUser(data.user);
+      setSuccessMessage("Session changée.");
+      navigate(ROUTES.DASHBOARD);
+      window.location.reload();
     } catch (err) {
       setError(err.message);
     }
@@ -618,6 +641,8 @@ export default function App() {
     createDropdownOpen,
     setCreateDropdownOpen,
     provisionUser,
+    provisionLoading,
+    impersonateUser,
     saveUser,
     setUserToDelete,
     newTeamName,

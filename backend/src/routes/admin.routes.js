@@ -102,6 +102,65 @@ module.exports = (ctx) => {
     return res.json({ ok: true });
   });
 
+  router.post("/admin/seed-users", authRequired, requireAdmin, async (req, res) => {
+    const workingDays = [1, 2, 3, 4, 5];
+    const baseSchedule = {
+      contractType: "CDI",
+      scheduleAmStart: "08:00",
+      scheduleAmEnd: "12:00",
+      schedulePmStart: "14:00",
+      schedulePmEnd: "18:00",
+      workingDays,
+      isProvisioned: true,
+      isActive: true,
+      isDeleted: false,
+    };
+
+    const seedUsers = [
+      { username: "employee01", displayName: "Employé 01", firstName: "Jean", lastName: "Durand" },
+      { username: "employee02", displayName: "Employé 02", firstName: "Marie", lastName: "Martin" },
+      { username: "employee03", displayName: "Employé 03", firstName: "Paul", lastName: "Bernard" },
+      { username: "employee04", displayName: "Employé 04", firstName: "Julie", lastName: "Lefevre" },
+      { username: "employee05", displayName: "Employé 05", firstName: "Nicolas", lastName: "Petit" },
+      { username: "employee06", displayName: "Employé 06", firstName: "Sophie", lastName: "Robert" },
+      { username: "employee07", displayName: "Employé 07", firstName: "Thomas", lastName: "Moreau" },
+      { username: "employee08", displayName: "Employé 08", firstName: "Laura", lastName: "Fournier" },
+      { username: "employee09", displayName: "Employé 09", firstName: "Pierre", lastName: "Roux" },
+      { username: "employee10", displayName: "Employé 10", firstName: "Emma", lastName: "Garcia" },
+    ];
+
+    const created = [];
+    for (const u of seedUsers) {
+      const user = await prisma.user.upsert({
+        where: { username: u.username },
+        update: {
+          displayName: u.displayName,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          roles: ["EMPLOYEE"],
+          ...baseSchedule,
+        },
+        create: {
+          username: u.username,
+          displayName: u.displayName,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          roles: ["EMPLOYEE"],
+          ...baseSchedule,
+        },
+      });
+      created.push(user.id);
+    }
+
+    await audit({
+      actorUserId: req.user.id,
+      action: "SEED_USERS",
+      targetType: "User",
+      meta: { count: created.length },
+    });
+    return res.json({ ok: true, count: created.length });
+  });
+
   router.post("/admin/sync-ad", authRequired, requireAdmin, async (req, res) => {
     try {
       const result = await syncAdUsers();

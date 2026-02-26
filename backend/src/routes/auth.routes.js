@@ -234,6 +234,38 @@ module.exports = (ctx) => {
     return res.json({ ok: true });
   });
 
+  router.post("/admin/impersonate/:id", authRequired, async (req, res) => {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: "Forbidden" });
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user || user.isDeleted || user.isActive === false) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const refreshToken = createRefreshToken();
+    const refreshTokenHash = hashToken(refreshToken);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshTokenHash },
+    });
+    const accessToken = signAccessToken({ id: user.id, username: user.username, roles: user.roles || [] });
+    setAuthCookies(res, accessToken, refreshToken);
+    await audit({
+      actorUserId: req.user.id,
+      action: "IMPERSONATE",
+      targetType: "User",
+      targetId: user.id,
+    });
+    return res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        roles: user.roles || [],
+      },
+    });
+  });
+
   router.get("/auth/me", authRequired, async (req, res) => {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },

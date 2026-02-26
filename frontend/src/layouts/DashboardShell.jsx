@@ -3,6 +3,7 @@ import React from "react";
 export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRight = null, children }) {
   const {
     navigate,
+    route,
     isAdmin,
     isManager,
     user,
@@ -18,19 +19,22 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
     onLogout,
   } = ctx;
 
+  const isActive = (path) => path === route || (path === "/members" && route.startsWith("/members/"));
+  const navBtn = (path, label) => (
+    <button type="button" onClick={() => navigate(path)} className={isActive(path) ? "tm-btn tm-btn-primary" : "tm-btn"}>
+      {label}
+    </button>
+  );
+
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => navigate("/dashboard")} className="tm-btn">Dashboard</button>
-          <button type="button" onClick={() => navigate("/my-clocks")} className="tm-btn">Mes pointages</button>
-          <button type="button" onClick={() => navigate("/profile")} className="tm-btn">Mon profil</button>
-          {(isAdmin || isManager) && (
-            <button type="button" onClick={() => navigate("/teams")} className="tm-btn">Gestion teams</button>
-          )}
-          {(isAdmin || isManager) && (
-            <button type="button" onClick={() => navigate("/members")} className="tm-btn">Gestion employés</button>
-          )}
+          {navBtn("/dashboard", "Dashboard")}
+          {navBtn("/my-clocks", "Mes pointages")}
+          {navBtn("/profile", "Mon profil")}
+          {(isAdmin || isManager) && navBtn("/teams", "Gestion teams")}
+          {(isAdmin || isManager) && navBtn("/members", "Gestion employés")}
         </div>
 
         {options.showUserPanel && (

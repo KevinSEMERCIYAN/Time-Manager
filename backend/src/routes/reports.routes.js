@@ -16,8 +16,8 @@ module.exports = (ctx) => {
     const { from, to, teamId, userId } = req.query || {};
     if (!from || !to) return res.status(400).json({ error: "from/to required" });
 
-    const start = new Date(`${from}T00:00:00`);
-    const end = new Date(`${to}T23:59:59`);
+    const start = new Date(`${from}T00:00:00.000Z`);
+    const end = new Date(`${to}T23:59:59.999Z`);
 
     let userIds = [];
     if (userId) {
@@ -50,39 +50,42 @@ module.exports = (ctx) => {
     const dailyShiftCount = new Map();
     const dailyLateCount = new Map();
 
+    const toDateKey = (val) =>
+      (val instanceof Date ? val : new Date(val)).toISOString().slice(0, 10);
     const byUserDay = new Map();
     for (const c of clocks) {
-      const key = `${c.userId}::${c.date.toISOString().slice(0, 10)}`;
+      const dayKey = toDateKey(c.clockInAt);
+      const key = `${c.userId}::${dayKey}`;
       const list = byUserDay.get(key) || [];
       list.push(c);
       byUserDay.set(key, list);
-      const worked = c.workedMinutes || 0;
+      const worked = Number(c.workedMinutes) || 0;
       workedMinutesTotal += worked;
-      const dayKey = c.clockInAt.toISOString().slice(0, 10);
       workedByDay.set(dayKey, (workedByDay.get(dayKey) || 0) + worked);
     }
 
     for (const list of byUserDay.values()) {
-      list.sort((a, b) => a.clockInAt - b.clockInAt);
-      const first = list[0];
-      shiftCount += 1;
-      if ((first.lateMinutes || 0) > 0) lateCount += 1;
-      const dayKey = first.clockInAt.toISOString().slice(0, 10);
+      list.sort((a, b) => new Date(a.clockInAt) - new Date(b.clockInAt));
+      shiftCount += 1; // un jour avec au moins un pointage
+      const dayHasLate = list.some((c) => Number(c.lateMinutes) > 0);
+      if (dayHasLate) lateCount += 1;
+      const dayKey = toDateKey(list[0].clockInAt);
       dailyShiftCount.set(dayKey, (dailyShiftCount.get(dayKey) || 0) + 1);
-      if ((first.lateMinutes || 0) > 0) {
+      if (dayHasLate) {
         dailyLateCount.set(dayKey, (dailyLateCount.get(dayKey) || 0) + 1);
       }
     }
 
     let expectedMinutes = 0;
     const days = [];
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
       days.push(new Date(d));
     }
 
     for (const day of days) {
+      const dayAtNoon = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 12, 0, 0));
       for (const u of users) {
-        const dailyHours = expectedDailyHours(u, day);
+        const dailyHours = expectedDailyHours(u, dayAtNoon);
         if (dailyHours > 0) expectedShiftCount += 1;
         expectedMinutes += dailyHours * 60;
       }
@@ -99,13 +102,14 @@ module.exports = (ctx) => {
     const dailyLatenessRate = [];
     const dailyAttendanceRate = [];
     const dailyAbsenceRate = [];
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
       const key = d.toISOString().slice(0, 10);
+      const dayAtNoon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0));
       const worked = workedByDay.get(key) || 0;
       const late = dailyLateCount.get(key) || 0;
-      const dailyExpected = users.reduce((sum, u) => sum + expectedDailyHours(u, d) * 60, 0);
+      const dailyExpected = users.reduce((sum, u) => sum + expectedDailyHours(u, dayAtNoon) * 60, 0);
       const dailyExpectedShifts = users.reduce(
-        (sum, u) => sum + (expectedDailyHours(u, d) > 0 ? 1 : 0),
+        (sum, u) => sum + (expectedDailyHours(u, dayAtNoon) > 0 ? 1 : 0),
         0
       );
 

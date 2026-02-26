@@ -1,7 +1,7 @@
 import React from "react";
 
 export function MembersPage({ ctx }) {
-  const { isAdmin, isManager, users, navigate, openClockModal } = ctx;
+  const { isAdmin, isManager, users, navigate, openClockModal, impersonateUser } = ctx;
 
   const memberList = (isAdmin || isManager)
     ? users
@@ -49,11 +49,28 @@ export function MembersPage({ ctx }) {
                 >
                   {u.displayName || u.username}
                 </button>
-                {(isAdmin || isManager) && (
-                  <button type="button" onClick={() => openClockModal(u)} className="tm-btn tm-btn-primary" style={{ padding: "6px 10px" }}>
-                    Pointer
-                  </button>
-                )}
+                <div style={{ display: "flex", gap: 6 }}>
+                  {(isAdmin || isManager) && (
+                    <button
+                      type="button"
+                      onClick={() => openClockModal(u)}
+                      className="tm-btn tm-btn-primary"
+                      style={{ padding: "6px 10px" }}
+                    >
+                      Pointer
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => impersonateUser(u.id)}
+                      className="tm-btn"
+                      style={{ padding: "6px 10px" }}
+                    >
+                      Voir comme
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
         </div>

@@ -226,10 +226,11 @@ export function DashboardPage({ ctx }) {
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>
-              <button type="button" onClick={loadTeamReport} className="tm-btn tm-btn-primary" style={{ padding: "6px 10px" }} disabled={teamReportLoading}>
+              <button type="button" onClick={loadTeamReport} className="tm-btn tm-btn-primary" style={{ padding: "6px 10px" }} disabled={teamReportLoading || !report?.from || !report?.to} title={!report?.from || !report?.to ? "Sélectionnez une période (filtres ci-dessus) puis rechargez le rapport principal." : undefined}>
                 {teamReportLoading ? "Chargement…" : "Charger"}
               </button>
             </div>
+            {(!report?.from || !report?.to) && <div className="tm-text-muted" style={{ fontSize: 11, marginTop: 4 }}>Période requise : utilisez les filtres ci-dessus.</div>}
             {teamReport && (
               <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 12, color: "var(--tm-text-main)" }}>
                 <div><strong>Daily</strong></div>
@@ -265,10 +266,11 @@ export function DashboardPage({ ctx }) {
                     <option key={u.id} value={u.id}>{u.displayName || u.username}</option>
                   ))}
               </select>
-              <button type="button" onClick={loadUserReport} className="tm-btn tm-btn-primary" style={{ padding: "6px 10px" }} disabled={userReportLoading}>
+              <button type="button" onClick={loadUserReport} className="tm-btn tm-btn-primary" style={{ padding: "6px 10px" }} disabled={userReportLoading || !report?.from || !report?.to} title={!report?.from || !report?.to ? "Sélectionnez une période (filtres ci-dessus) puis rechargez le rapport principal." : undefined}>
                 {userReportLoading ? "Chargement…" : "Charger"}
               </button>
             </div>
+            {(!report?.from || !report?.to) && <div className="tm-text-muted" style={{ fontSize: 11, marginTop: 4 }}>Période requise : utilisez les filtres ci-dessus.</div>}
             {userReport && (
               <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 12, color: "var(--tm-text-main)" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, border: "1px solid var(--tm-border)" }}>

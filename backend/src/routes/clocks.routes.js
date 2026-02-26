@@ -29,8 +29,7 @@ module.exports = (ctx) => {
 
     const now = new Date();
     const dateKey = now.toISOString().slice(0, 10);
-    const isDevUser =
-      process.env.DEV_AUTH === "true" && user.username === (process.env.DEV_AUTH_USER || "dev");
+    const isDevUser = process.env.DEV_AUTH === "true" || process.env.DEV_AUTH === "1";
 
     if (!user.contractType) return res.status(400).json({ error: "Clock-in not allowed" });
     if (!user.scheduleAmStart || !user.scheduleAmEnd || !user.schedulePmStart || !user.schedulePmEnd) {
