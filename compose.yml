@@ -6,6 +6,8 @@ services:
       MARIADB_DATABASE: timemanager
       MARIADB_USER: timemanager
       MARIADB_PASSWORD: timemanager
+    ports:
+      - "3306:3306"  # Exposé pour tests depuis machine hôte
     volumes:
       - db-data:/var/lib/mysql
     healthcheck:
@@ -17,11 +19,36 @@ services:
 
   backend:
     build: ./backend
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: timemanager
+      DB_USER: timemanager
+      DB_PASS: timemanager
+
+      LDAP_URL: ldaps://AD-01.primebank.local:636
+      LDAP_BASE_DN: DC=primebank,DC=local
+      LDAP_BIND_DN: svc_ldap_reader@primebank.local
+      LDAP_BIND_PASSWORD: change-me
+      LDAP_USER_FILTER: "(sAMAccountName={{username}})"
+      LDAP_CA_CERT_PATH: /app/certs/primebank-root-ca.cer
+      LDAP_TLS_SERVERNAME: AD-01.primebank.local
+      LDAP_DIRECT_BIND: "true"
+      LDAP_UPN_DOMAIN: primebank.local
+
+      JWT_SECRET: change-me
+      JWT_TTL_MINUTES: "15"
+
+      DEV_MODE: "true"  # Mode développement : active les utilisateurs de test (sans LDAP)
+
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+      MAIL_FROM: no-reply@primebank.local
     depends_on:
       db:
         condition: service_healthy
-    expose:
-      - "3000"
+    ports:
+      - "3000:3000"  # Exposé pour accès direct depuis machine hôte
     restart: unless-stopped
 
   frontend:
@@ -33,7 +60,7 @@ services:
   reverse-proxy:
     image: nginx:alpine
     ports:
-      - "8080:80"
+      - "8081:80"  # Changé de 8080 à 8081 car le port 8080 est déjà utilisé
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     depends_on:
@@ -49,3 +76,4 @@ services:
 
 volumes:
   db-data:
+

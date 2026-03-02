@@ -1,0 +1,57 @@
+services:
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      MARIADB_DATABASE: ${DB_NAME:-timemanager}
+      MARIADB_USER: ${DB_USER:-timemanager}
+      MARIADB_PASSWORD: ${DB_PASS:-timemanager}
+    volumes:
+      - db-data:/var/lib/mysql
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-timemanager}
+      DB_USER: ${DB_USER:-timemanager}
+      DB_PASS: ${DB_PASS:-timemanager}
+
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
+      JWT_TTL_MINUTES: "15"
+
+      DEV_MODE: "false"
+
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+      MAIL_FROM: no-reply@primebank.local
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+
+  reverse-proxy:
+    image: nginx:alpine
+    ports:
+      - "8081:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+
+volumes:
+  db-data:
+
