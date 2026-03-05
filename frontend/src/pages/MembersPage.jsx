@@ -1,7 +1,7 @@
 import React from "react";
 
 export function MembersPage({ ctx }) {
-  const { isAdmin, isManager, users, navigate, openClockModal, impersonateUser } = ctx;
+  const { isAdmin, isManager, users, navigate, openClockModal, impersonateUser, setUserToDelete } = ctx;
 
   const memberList = (isAdmin || isManager)
     ? users
@@ -68,6 +68,16 @@ export function MembersPage({ ctx }) {
                       style={{ padding: "6px 10px" }}
                     >
                       Voir comme
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setUserToDelete(u)}
+                      className="tm-btn tm-btn-danger"
+                      style={{ padding: "6px 10px" }}
+                    >
+                      Supprimer
                     </button>
                   )}
                 </div>

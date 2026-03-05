@@ -405,6 +405,13 @@ body {
   cursor: pointer;
 }
 
+.tm-topbar-pill-active {
+  border-color: var(--tm-primary);
+  background-color: #ffffff;
+  color: var(--tm-primary);
+  font-weight: 600;
+}
+
 .tm-topbar-search-row {
   display: flex;
   align-items: center;

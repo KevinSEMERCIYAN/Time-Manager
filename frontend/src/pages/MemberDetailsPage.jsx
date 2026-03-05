@@ -1,6 +1,8 @@
 import React from "react";
 import { WORKING_DAYS } from "../constants/workDays";
 
+const DEPARTMENTS = ["Finance", "Dev", "Juridique", "RH", "Marketing", "Audit"];
+
 export function MemberDetailsPage({ ctx }) {
   const { route, users, setUsers, isAdmin, saveUser, setUserToDelete } = ctx;
   const memberId = route.split("/").pop();
@@ -30,6 +32,47 @@ export function MemberDetailsPage({ ctx }) {
         <div style={{ fontSize: 16, fontWeight: 600, color: "var(--tm-text-main)" }}>{target.displayName || target.username}</div>
 
         <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+          {isAdmin && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Pôle (département)</div>
+                <select
+                  value={target.department || ""}
+                  onChange={(e) => {
+                    const next = users.map((x) => (x.id === target.id ? { ...x, department: e.target.value } : x));
+                    setUsers(next);
+                  }}
+                  className="tm-input"
+                  style={{ width: "100%", maxWidth: 280 }}
+                >
+                  <option value="" disabled>Choisir...</option>
+                  {DEPARTMENTS.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Grade</div>
+                <select
+                  value={Array.isArray(target.roles) && target.roles.includes("ADMIN") ? "ADMIN" : (Array.isArray(target.roles) && target.roles.includes("MANAGER") ? "MANAGER" : "EMPLOYEE")}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const nextRoles = v === "ADMIN" ? ["ADMIN", "MANAGER"] : v === "MANAGER" ? ["MANAGER"] : ["EMPLOYEE"];
+                    const next = users.map((x) => (x.id === target.id ? { ...x, roles: nextRoles } : x));
+                    setUsers(next);
+                  }}
+                  className="tm-input"
+                  style={{ width: "100%", maxWidth: 280 }}
+                >
+                  <option value="EMPLOYEE">Employé</option>
+                  <option value="MANAGER">Manager</option>
+                  <option value="ADMIN">Admin</option>
+                </select>
+              </div>
+            </div>
+          )}
+
           <div>
             <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Contrat</div>
             <select

@@ -41,18 +41,41 @@ module.exports = (ctx) => {
       lastName,
       email,
       phone,
+      department,
+      roles,
       contractType,
       schedule,
       isActive = true,
+      isProvisioned = false,
       teamIds = [],
     } = req.body || {};
     if (!username || !displayName) return res.status(400).json({ error: "username/displayName required" });
 
+    let finalDepartment = department || null;
+    let finalRoles = ["EMPLOYEE"];
+    let finalProvisioned = !!isProvisioned;
+
     if (isManager(req.user) && !isAdmin(req.user)) {
-      const managerTeams = await getManagerTeamIds(req.user.id);
-      if (!teamIds.every((t) => managerTeams.includes(t))) {
-        return res.status(403).json({ error: "Forbidden" });
+      // Manager: ne peut créer que des EMPLOYEE dans SON pôle.
+      finalDepartment = req.user.department || null;
+      if (!finalDepartment) return res.status(400).json({ error: "manager department missing" });
+      finalRoles = ["EMPLOYEE"];
+      finalProvisioned = false;
+      if (Array.isArray(teamIds) && teamIds.length) {
+        const managerTeams = await getManagerTeamIds(req.user.id);
+        if (!teamIds.every((t) => managerTeams.includes(t))) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
       }
+    } else if (isAdmin(req.user)) {
+      // Admin: peut choisir rôles + department.
+      if (Array.isArray(roles) && roles.length) {
+        finalRoles = roles
+          .map((r) => String(r || "").trim().toUpperCase())
+          .filter(Boolean);
+      }
+      // Garde-fou: si aucun rôle fourni, on force EMPLOYEE.
+      if (!finalRoles.length) finalRoles = ["EMPLOYEE"];
     }
 
     const user = await prisma.user.create({
@@ -63,7 +86,8 @@ module.exports = (ctx) => {
         lastName: lastName || null,
         email: email || null,
         phone: phone || null,
-        roles: ["EMPLOYEE"],
+        department: finalDepartment,
+        roles: finalRoles,
         contractType: contractType || null,
         scheduleAmStart: schedule?.amStart || null,
         scheduleAmEnd: schedule?.amEnd || null,
@@ -72,7 +96,7 @@ module.exports = (ctx) => {
         graceMinutes: Number.isFinite(schedule?.graceMin) ? schedule.graceMin : DEFAULT_SCHEDULE.graceMin,
         isActive: !!isActive,
         isDeleted: false,
-        isProvisioned: false,
+        isProvisioned: finalProvisioned,
       },
     });
 
@@ -95,7 +119,7 @@ module.exports = (ctx) => {
 
   router.put("/users/:id", authRequired, async (req, res) => {
     const { id } = req.params;
-    const { displayName, firstName, lastName, email, phone, contractType, schedule, isActive, teamIds, workingDays } = req.body || {};
+    const { displayName, firstName, lastName, email, phone, contractType, schedule, isActive, teamIds, workingDays, roles, department } = req.body || {};
 
     if (!isAdmin(req.user) && !isManager(req.user)) {
       return res.status(403).json({ error: "Forbidden" });
@@ -112,6 +136,14 @@ module.exports = (ctx) => {
       }
     }
 
+    const isAdminActor = isAdmin(req.user);
+    const nextRoles = isAdminActor && Array.isArray(roles)
+      ? roles.map((r) => String(r || "").trim().toUpperCase()).filter(Boolean)
+      : undefined;
+    const nextDepartment = isAdminActor
+      ? (typeof department === "string" ? department : department === null ? null : undefined)
+      : undefined;
+
     const user = await prisma.user.update({
       where: { id },
       data: {
@@ -120,6 +152,8 @@ module.exports = (ctx) => {
         lastName: lastName || undefined,
         email: email || undefined,
         phone: phone || undefined,
+        roles: nextRoles && nextRoles.length ? nextRoles : undefined,
+        department: nextDepartment,
         contractType: contractType || undefined,
         scheduleAmStart: schedule?.amStart || undefined,
         scheduleAmEnd: schedule?.amEnd || undefined,
@@ -159,9 +193,15 @@ module.exports = (ctx) => {
     const target = await prisma.user.findUnique({ where: { id } });
     if (!target) return res.status(404).json({ error: "Not found" });
 
-    if (isManager(req.user) && !isAdmin(req.user) && teamId) {
-      const managerTeams = await getManagerTeamIds(req.user.id);
-      if (!managerTeams.includes(teamId)) return res.status(403).json({ error: "Forbidden" });
+    if (isManager(req.user) && !isAdmin(req.user)) {
+      // Manager: ne provisionne que dans son pôle.
+      const actorDept = req.user.department || null;
+      if (!actorDept) return res.status(403).json({ error: "Forbidden" });
+      if ((target.department || null) !== actorDept) return res.status(403).json({ error: "Forbidden" });
+      if (teamId) {
+        const managerTeams = await getManagerTeamIds(req.user.id);
+        if (!managerTeams.includes(teamId)) return res.status(403).json({ error: "Forbidden" });
+      }
     }
 
     await prisma.user.update({

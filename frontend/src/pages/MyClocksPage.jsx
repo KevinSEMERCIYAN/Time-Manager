@@ -42,15 +42,65 @@ export function MyClocksPage({ ctx }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const summary = useMemo(() => {
-    if (!clocks.length) return { totalMinutes: 0, days: 0, last: null };
-    const totalMinutes = clocks.reduce((acc, c) => acc + (c.workedMinutes || 0), 0);
-    const daysSet = new Set(
-      clocks.map((c) => (c.date ? c.date.slice(0, 10) : c.clockInAt?.slice(0, 10))).filter(Boolean),
+  // On agrège les clocks par jour pour éviter les doublons (une ligne par date),
+  // et on recalcule la durée à partir de la première entrée / dernière sortie.
+  const aggregated = useMemo(() => {
+    if (!clocks.length) return { rows: [], summary: { totalMinutes: 0, days: 0, last: null } };
+
+    const byDay = new Map();
+
+    clocks.forEach((c) => {
+      const dateKey =
+        (c.date && c.date.slice(0, 10)) ||
+        (c.clockInAt && c.clockInAt.slice(0, 10));
+      if (!dateKey) return;
+
+      const existing = byDay.get(dateKey);
+      const clockInAt = c.clockInAt ? new Date(c.clockInAt) : null;
+      const clockOutAt = c.clockOutAt ? new Date(c.clockOutAt) : null;
+
+      if (!existing) {
+        byDay.set(dateKey, {
+          id: dateKey,
+          date: dateKey,
+          clockInAt: clockInAt,
+          clockOutAt: clockOutAt,
+          workedMinutes: 0,
+          lateMinutes: c.lateMinutes || 0,
+        });
+      } else {
+        if (clockInAt && (!existing.clockInAt || clockInAt < existing.clockInAt)) {
+          existing.clockInAt = clockInAt;
+        }
+        if (clockOutAt && (!existing.clockOutAt || clockOutAt > existing.clockOutAt)) {
+          existing.clockOutAt = clockOutAt;
+        }
+        existing.lateMinutes += c.lateMinutes || 0;
+      }
+    });
+
+    const rows = Array.from(byDay.values()).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
     );
-    const last = clocks[0] || null;
-    return { totalMinutes, days: daysSet.size, last };
+
+    // Recalcul de la durée par jour à partir de clockIn/clockOut.
+    let totalMinutes = 0;
+    rows.forEach((r) => {
+      if (r.clockInAt && r.clockOutAt) {
+        const diff = Math.max(0, Math.floor((r.clockOutAt - r.clockInAt) / 60000));
+        r.workedMinutes = diff;
+        totalMinutes += diff;
+      } else {
+        r.workedMinutes = r.workedMinutes || 0;
+      }
+    });
+    const days = rows.length;
+    const last = rows[0] || null;
+
+    return { rows, summary: { totalMinutes, days, last } };
   }, [clocks]);
+
+  const summary = aggregated.summary;
 
   const formatDate = (iso) => {
     if (!iso) return "-";
@@ -149,10 +199,10 @@ export function MyClocksPage({ ctx }) {
                 </tr>
               </thead>
               <tbody>
-                {clocks.map((c) => (
+                {aggregated.rows.map((c) => (
                   <tr key={c.id}>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--tm-border)" }}>
-                      {formatDate(c.clockInAt || c.date)}
+                      {formatDate(c.date)}
                     </td>
                     <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--tm-border)" }}>
                       {formatTime(c.clockInAt)}

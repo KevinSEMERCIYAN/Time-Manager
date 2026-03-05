@@ -31,11 +31,35 @@ module.exports = (ctx) => {
         : rawUsername;
 
     // Mode dev : connexion sans LDAP (uniquement si DEV_AUTH=true)
+    // + comptes de test (admin / manager / employee) si DEV_MODE=true.
     const devAuthEnabled = process.env.DEV_AUTH === "true" || process.env.DEV_AUTH === "1";
+    const devMode = process.env.DEV_MODE === "true" || process.env.DEV_MODE === "1";
+
     const devUser = process.env.DEV_AUTH_USER || "dev";
     const devPassword = process.env.DEV_AUTH_PASSWORD || "dev";
-    if (devAuthEnabled && normalizedUsername === devUser && password === devPassword) {
-      const displayName = process.env.DEV_AUTH_DISPLAY_NAME || "Utilisateur Dev";
+
+    const testAccounts = devMode
+      ? {
+          admin: { password: "admin123", roles: ["ADMIN"], displayName: "Administrateur Test", department: "Finance" },
+          manager: { password: "manager123", roles: ["MANAGER"], displayName: "Manager Test", department: "Finance" },
+          employee: { password: "employee123", roles: ["EMPLOYEE"], displayName: "Employé Test", department: "Finance" },
+        }
+      : {};
+
+    const isDevUserLogin =
+      devAuthEnabled &&
+      normalizedUsername === devUser &&
+      password === devPassword;
+
+    const testAccount =
+      devAuthEnabled && testAccounts[normalizedUsername.toLowerCase()]
+        ? testAccounts[normalizedUsername.toLowerCase()]
+        : null;
+
+    if (isDevUserLogin || testAccount) {
+      const displayName = isDevUserLogin
+        ? (process.env.DEV_AUTH_DISPLAY_NAME || "Utilisateur Dev")
+        : testAccount.displayName;
       const devSchedule = {
         contractType: "CDI",
         scheduleAmStart: "08:00",
@@ -44,22 +68,26 @@ module.exports = (ctx) => {
         schedulePmEnd: "18:00",
         workingDays: [1, 2, 3, 4, 5],
       };
+      const roles = isDevUserLogin ? ["ADMIN", "MANAGER"] : (testAccount.roles || []);
+      const department = isDevUserLogin ? "DEV" : (testAccount.department || null);
       const user = await prisma.user.upsert({
         where: { username: normalizedUsername },
         update: {
           displayName,
-          roles: ["ADMIN", "MANAGER"],
+          roles,
           isProvisioned: true,
           isActive: true,
           isDeleted: false,
+          department,
           ...devSchedule,
         },
         create: {
           username: normalizedUsername,
           displayName,
-          roles: ["ADMIN", "MANAGER"],
+          roles,
           isProvisioned: true,
           isDeleted: false,
+          department,
           ...devSchedule,
         },
       });

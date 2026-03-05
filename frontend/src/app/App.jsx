@@ -82,8 +82,12 @@ export default function App() {
   const [provisionLoading, setProvisionLoading] = useState(false);
 
   const roles = user?.roles || [];
-  const isAdmin = roles.includes("ADMIN");
-  const isManager = roles.includes("MANAGER");
+  const isAdmin =
+    roles.includes("ROLE_ADMIN") ||
+    roles.includes("ADMIN");
+  const isManager =
+    roles.includes("ROLE_MANAGER") ||
+    roles.includes("MANAGER");
 
   const navigate = (path) => {
     if (window.location.pathname !== path) {
@@ -329,7 +333,8 @@ export default function App() {
     try {
       setSeedLoading(true);
       setError("");
-      await apiFetch("/admin/seed", { method: "POST" });
+      // Génération rapide (démo): côté backend, /admin/seed est borné et accepte un param days.
+      await apiFetch("/admin/seed?days=30", { method: "POST" });
       await loadDashboard();
       setSuccessMessage("Pointages générés.");
     } catch (err) {
@@ -364,6 +369,13 @@ export default function App() {
       await apiFetch(`/users/${targetUser.id}`, {
         method: "PUT",
         body: JSON.stringify({
+          displayName: targetUser.displayName || undefined,
+          firstName: targetUser.firstName || undefined,
+          lastName: targetUser.lastName || undefined,
+          email: targetUser.email || null,
+          phone: targetUser.phone || null,
+          department: typeof targetUser.department === "string" ? targetUser.department : null,
+          roles: Array.isArray(targetUser.roles) ? targetUser.roles : undefined,
           contractType: targetUser.contractType || null,
           workingDays,
           schedule: {
@@ -381,6 +393,33 @@ export default function App() {
     } catch (err) {
       setError(err.message);
       window.alert(err.message || "Erreur lors de l’enregistrement.");
+    }
+  };
+
+  const createUserManual = async (payload) => {
+    try {
+      setError("");
+      const body = {
+        username: payload?.username,
+        displayName: payload?.displayName,
+        firstName: payload?.firstName || null,
+        lastName: payload?.lastName || null,
+        email: payload?.email || null,
+        phone: payload?.phone || null,
+        department: payload?.department || null,
+        roles: Array.isArray(payload?.roles) ? payload.roles : undefined,
+        contractType: payload?.contractType || null,
+        schedule: payload?.schedule || null,
+        isActive: payload?.isActive !== false,
+        isProvisioned: payload?.isProvisioned === true,
+      };
+      const data = await apiFetch("/users", { method: "POST", body: JSON.stringify(body) });
+      await loadUsers();
+      setSuccessMessage("Utilisateur créé.");
+      return data.user;
+    } catch (err) {
+      setError(err.message);
+      throw err;
     }
   };
 
@@ -434,6 +473,27 @@ export default function App() {
       setUser(data.user);
       setSuccessMessage("Session changée.");
       navigate(ROUTES.DASHBOARD);
+      window.location.reload();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // DEV_MODE: bascule directe vers les comptes de test (admin / manager / employee)
+  const devLoginAs = async (username) => {
+    const passwords = {
+      admin: "admin123",
+      manager: "manager123",
+      employee: "employee123",
+    };
+    const password = passwords[username];
+    if (!password) return;
+    try {
+      setError("");
+      await apiFetch("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      });
       window.location.reload();
     } catch (err) {
       setError(err.message);
@@ -643,7 +703,9 @@ export default function App() {
     provisionUser,
     provisionLoading,
     impersonateUser,
+    devLoginAs,
     saveUser,
+    createUserManual,
     setUserToDelete,
     newTeamName,
     setNewTeamName,
@@ -672,9 +734,7 @@ export default function App() {
 
   let content = <LandingPage ctx={appCtx} />;
 
-  if (route === ROUTES.SIGN_IN) {
-    content = <LoginPage ctx={appCtx} />;
-  } else if (route === ROUTES.DASHBOARD) {
+  if (route === ROUTES.DASHBOARD) {
     content = withShell(<DashboardPage ctx={appCtx} />, { showFilters: true, showUserPanel: true });
   } else if (route === ROUTES.MY_CLOCKS) {
     content = withShell(<MyClocksPage ctx={appCtx} />, { showFilters: false, showUserPanel: true });
@@ -692,16 +752,22 @@ export default function App() {
     content = withShell(<CreateTeamPage ctx={appCtx} />);
   }
 
-  const isWideLayout = route === ROUTES.SIGN_IN || route === ROUTES.LANDING;
+  // Pour la page de connexion / landing, on affiche le layout plein écran
+  // sans le wrapper "tm-app-charter" afin d'utiliser le visuel moderne.
+  if (route === ROUTES.SIGN_IN || route === ROUTES.LANDING) {
+    return <LoginPage ctx={appCtx} />;
+  }
+
+  const isWideLayout = false;
 
   return (
     <div className="tm-app-charter">
       <div
         className="tm-card"
         style={{
-          maxWidth: isWideLayout ? 620 : 1100,
-          margin: isWideLayout ? "80px auto" : "40px auto",
-          padding: isWideLayout ? "28px 36px" : 28,
+          maxWidth: isWideLayout ? 620 : "min(1400px, 100% - 64px)",
+          margin: isWideLayout ? "80px auto" : "24px auto",
+          padding: isWideLayout ? "28px 36px" : 24,
         }}
       >
         <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: "var(--tm-text-main)" }}>TimeManager</h1>
