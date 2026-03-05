@@ -28,6 +28,9 @@ services:
       DB_USER: timemanager
       DB_PASS: timemanager
 
+      # Mode développement : active les comptes de test (admin / manager / employee)
+      DEV_MODE: "true"
+
       LDAP_URL: ldaps://AD-01.primebank.local:636
       LDAP_BASE_DN: DC=primebank,DC=local
       LDAP_BIND_DN: administrateur@primebank.local
@@ -52,6 +55,11 @@ services:
       MAIL_HOST: mailpit
       MAIL_PORT: "1025"
       MAIL_FROM: no-reply@primebank.local
+
+      # Connexion sans LDAP en local (désactiver en prod)
+      DEV_AUTH: "true"
+      DEV_AUTH_USER: "dev"
+      DEV_AUTH_PASSWORD: "dev"
     depends_on:
       db:
         condition: service_healthy
@@ -68,7 +76,7 @@ services:
   reverse-proxy:
     image: nginx:alpine
     ports:
-      - "8080:80"
+      - "8081:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     depends_on:

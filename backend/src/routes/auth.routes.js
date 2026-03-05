@@ -24,11 +24,96 @@ module.exports = (ctx) => {
     if (!username || !password) return res.status(400).json({ error: "username/password required" });
 
     const rawUsername = String(username);
-    const normalizedUsername = rawUsername.includes("\\")
+    let normalizedUsername = rawUsername.includes("\\")
       ? rawUsername.split("\\").pop()
       : rawUsername.includes("@")
         ? rawUsername.split("@")[0]
         : rawUsername;
+
+    // Mode dev : connexion sans LDAP (uniquement si DEV_AUTH=true)
+    // + comptes de test (admin / manager / employee) si DEV_MODE=true.
+    const devAuthEnabled = process.env.DEV_AUTH === "true" || process.env.DEV_AUTH === "1";
+    const devMode = process.env.DEV_MODE === "true" || process.env.DEV_MODE === "1";
+
+    const devUser = process.env.DEV_AUTH_USER || "dev";
+    const devPassword = process.env.DEV_AUTH_PASSWORD || "dev";
+
+    const testAccounts = devMode
+      ? {
+          admin: { password: "admin123", roles: ["ADMIN"], displayName: "Administrateur Test", department: "Finance" },
+          manager: { password: "manager123", roles: ["MANAGER"], displayName: "Manager Test", department: "Finance" },
+          employee: { password: "employee123", roles: ["EMPLOYEE"], displayName: "Employé Test", department: "Finance" },
+        }
+      : {};
+
+    const isDevUserLogin =
+      devAuthEnabled &&
+      normalizedUsername === devUser &&
+      password === devPassword;
+
+    const testAccount =
+      devAuthEnabled && testAccounts[normalizedUsername.toLowerCase()]
+        ? testAccounts[normalizedUsername.toLowerCase()]
+        : null;
+
+    if (isDevUserLogin || testAccount) {
+      const displayName = isDevUserLogin
+        ? (process.env.DEV_AUTH_DISPLAY_NAME || "Utilisateur Dev")
+        : testAccount.displayName;
+      const devSchedule = {
+        contractType: "CDI",
+        scheduleAmStart: "08:00",
+        scheduleAmEnd: "12:00",
+        schedulePmStart: "14:00",
+        schedulePmEnd: "18:00",
+        workingDays: [1, 2, 3, 4, 5],
+      };
+      const roles = isDevUserLogin ? ["ADMIN", "MANAGER"] : (testAccount.roles || []);
+      const department = isDevUserLogin ? "DEV" : (testAccount.department || null);
+      const user = await prisma.user.upsert({
+        where: { username: normalizedUsername },
+        update: {
+          displayName,
+          roles,
+          isProvisioned: true,
+          isActive: true,
+          isDeleted: false,
+          department,
+          ...devSchedule,
+        },
+        create: {
+          username: normalizedUsername,
+          displayName,
+          roles,
+          isProvisioned: true,
+          isDeleted: false,
+          department,
+          ...devSchedule,
+        },
+      });
+      const refreshToken = createRefreshToken();
+      const refreshTokenHash = hashToken(refreshToken);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { refreshTokenHash },
+      });
+      const accessToken = signAccessToken({ id: user.id, username: user.username, roles: user.roles || [] });
+      setAuthCookies(res, accessToken, refreshToken);
+      await audit({
+        actorUserId: user.id,
+        action: "LOGIN",
+        targetType: "User",
+        targetId: user.id,
+      });
+      return res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName,
+          roles: user.roles || [],
+        },
+      });
+    }
 
     const BASE_DN = process.env.LDAP_BASE_DN;
     const BIND_DN = process.env.LDAP_BIND_DN;
@@ -175,6 +260,38 @@ module.exports = (ctx) => {
       targetId: req.user.id,
     });
     return res.json({ ok: true });
+  });
+
+  router.post("/admin/impersonate/:id", authRequired, async (req, res) => {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: "Forbidden" });
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user || user.isDeleted || user.isActive === false) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const refreshToken = createRefreshToken();
+    const refreshTokenHash = hashToken(refreshToken);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshTokenHash },
+    });
+    const accessToken = signAccessToken({ id: user.id, username: user.username, roles: user.roles || [] });
+    setAuthCookies(res, accessToken, refreshToken);
+    await audit({
+      actorUserId: req.user.id,
+      action: "IMPERSONATE",
+      targetType: "User",
+      targetId: user.id,
+    });
+    return res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        roles: user.roles || [],
+      },
+    });
   });
 
   router.get("/auth/me", authRequired, async (req, res) => {
