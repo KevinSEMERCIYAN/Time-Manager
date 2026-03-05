@@ -26,20 +26,40 @@ module.exports = (ctx) => {
   });
 
   router.post("/admin/seed", authRequired, requireAdmin, async (req, res) => {
-    const users = await prisma.user.findMany();
+    // IMPORTANT: cette route doit être rapide (démo). Avant: ~730 jours * N users (trop long → timeout proxy 499).
+    // On limite par défaut à 30 jours (configurable) et on insert en bulk.
+    const requestedDays = parseInt(req.body?.days ?? req.query?.days ?? "30", 10);
+    const daysToGenerate = Number.isFinite(requestedDays) ? Math.min(Math.max(requestedDays, 1), 120) : 30;
+
+    const users = await prisma.user.findMany({
+      where: {
+        isDeleted: false,
+        isActive: true,
+        contractType: { not: null },
+      },
+    });
     if (!users.length) return res.status(400).json({ error: "No users" });
 
     const randomMinutes = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
     const base = new Date();
-    const daysToGenerate = 730;
+    base.setHours(0, 0, 0, 0);
+    const from = new Date(base);
+    from.setDate(from.getDate() - (daysToGenerate - 1));
 
     for (const u of users) {
-      if (!u.contractType) continue;
       if (!u.scheduleAmStart || !u.scheduleAmEnd || !u.schedulePmStart || !u.schedulePmEnd) continue;
+      // Pour éviter les doublons et accélérer: on supprime la fenêtre cible puis on regen.
+      await prisma.clock.deleteMany({
+        where: {
+          userId: u.id,
+          date: { gte: from, lte: base },
+        },
+      });
+
+      const rows = [];
       for (let i = 0; i < daysToGenerate; i += 1) {
-        const d = new Date(base);
-        d.setDate(d.getDate() - i);
-        d.setHours(0, 0, 0, 0);
+        const d = new Date(from);
+        d.setDate(d.getDate() + i);
         if (!isWorkingDay(u, d)) continue;
         const dateKey = d.toISOString().slice(0, 10);
 
@@ -81,23 +101,26 @@ module.exports = (ctx) => {
         );
         const workedMinutes = Math.max(0, Math.floor((clockOut - clockIn) / 60000));
 
-        await prisma.clock.create({
-          data: {
-            userId: u.id,
-            date: new Date(`${dateKey}T00:00:00`),
-            clockInAt: clockIn,
-            clockOutAt: clockOut,
-            lateMinutes,
-            workedMinutes,
-            source: "manual",
-          },
+        rows.push({
+          userId: u.id,
+          date: new Date(`${dateKey}T00:00:00`),
+          clockInAt: clockIn,
+          clockOutAt: clockOut,
+          lateMinutes,
+          workedMinutes,
+          source: "manual",
         });
+      }
+
+      if (rows.length) {
+        await prisma.clock.createMany({ data: rows });
       }
     }
 
     await audit({
       actorUserId: req.user.id,
       action: "SEED_DATA",
+      meta: { days: daysToGenerate },
     });
     return res.json({ ok: true });
   });

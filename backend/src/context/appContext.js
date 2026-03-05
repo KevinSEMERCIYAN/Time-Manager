@@ -99,6 +99,7 @@ const authRequired = async (req, res, next) => {
       username: user.username,
       displayName: user.displayName,
       roles: user.roles || [],
+      department: user.department || null,
     };
     next();
   } catch (err) {
@@ -190,15 +191,12 @@ const canAccessUser = async (actor, userId) => {
   if (!target || target.isDeleted) return false;
   if (actor.id === userId) return true;
   if (!isManager(actor)) return false;
-  if (Array.isArray(target.roles) && target.roles.includes("EMPLOYEE") && target.isProvisioned) {
-    return true;
-  }
-  const managerTeamIds = await getManagerTeamIds(actor.id);
-  if (!managerTeamIds.length) return false;
-  const membership = await prisma.teamMember.findFirst({
-    where: { userId, teamId: { in: managerTeamIds } },
-  });
-  return !!membership;
+  // Règle métier: un manager ne peut accéder qu'aux EMPLOYEE de son pôle.
+  const rolesList = Array.isArray(target.roles) ? target.roles : [];
+  if (!rolesList.includes("EMPLOYEE") || !target.isProvisioned) return false;
+  const actorDept = actor.department || null;
+  if (!actorDept) return false;
+  return target.department === actorDept;
 };
 
 const canManageClockFor = async (actor, targetId) => {
@@ -210,12 +208,9 @@ const canManageClockFor = async (actor, targetId) => {
   if (!target.isProvisioned) return false;
   const rolesList = Array.isArray(target.roles) ? target.roles : [];
   if (!rolesList.includes("EMPLOYEE")) return false;
-  const managerTeamIds = await getManagerTeamIds(actor.id);
-  if (!managerTeamIds.length) return false;
-  const membership = await prisma.teamMember.findFirst({
-    where: { userId: targetId, teamId: { in: managerTeamIds } },
-  });
-  return !!membership;
+  const actorDept = actor.department || null;
+  if (!actorDept) return false;
+  return target.department === actorDept;
 };
 
 const isManagerOfTeam = async (actor, teamId) => {
@@ -238,28 +233,26 @@ const listAccessibleUsers = async (actor) => {
     return prisma.user.findMany({ orderBy: { displayName: "asc" } });
   }
   if (isManager(actor)) {
-    const teamIds = await getManagerTeamIds(actor.id);
-    if (!teamIds.length) {
-      const employees = await loadEmployees();
-      const self = await prisma.user.findUnique({ where: { id: actor.id } });
-      if (self && !self.isDeleted) {
-        const exists = employees.find((u) => u.id === self.id);
-        if (!exists) employees.unshift(self);
-      }
-      return employees;
-    }
-    const members = await prisma.teamMember.findMany({
-      where: { teamId: { in: teamIds } },
-      include: { user: true },
-    });
-    let users = members.map((m) => m.user).filter((u) => u);
-    if (!users.length) {
-      users = await loadEmployees();
-    }
+    // Règle métier: un manager ne doit voir/gérer que les employés de SON pôle (department).
+    // Si le manager n'a pas de department défini, on ne lui expose que lui-même.
     const self = await prisma.user.findUnique({ where: { id: actor.id } });
-    if (self) users.push(self);
+    if (!self || self.isDeleted) return [];
+    const dept = self.department || actor.department || null;
+    if (!dept) return [self];
+
+    const users = await prisma.user.findMany({
+      where: {
+        isDeleted: false,
+        department: dept,
+      },
+      orderBy: { displayName: "asc" },
+    });
+
+    // Par prudence, on s'assure de toujours inclure le manager lui-même.
     const dedup = new Map();
     for (const u of users) dedup.set(u.id, u);
+    dedup.set(self.id, self);
+
     return Array.from(dedup.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
   }
   const self = await prisma.user.findUnique({ where: { id: actor.id } });

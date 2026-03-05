@@ -28,6 +28,9 @@ services:
       DB_USER: timemanager
       DB_PASS: timemanager
 
+      # Mode développement : active les comptes de test (admin / manager / employee)
+      DEV_MODE: "true"
+
       LDAP_URL: ldaps://AD-01.primebank.local:636
       LDAP_BASE_DN: DC=primebank,DC=local
       LDAP_BIND_DN: administrateur@primebank.local

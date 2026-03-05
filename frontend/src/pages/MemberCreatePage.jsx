@@ -1,8 +1,11 @@
 import React from "react";
 import { splitDisplayName } from "../utils/name";
 
+const DEPARTMENTS = ["Finance", "Dev", "Juridique", "RH", "Marketing", "Audit"];
+
 export function MemberCreatePage({ ctx }) {
   const {
+    isAdmin,
     users,
     teams,
     createSearch,
@@ -25,6 +28,8 @@ export function MemberCreatePage({ ctx }) {
     setCreateTeamId,
     provisionUser,
     provisionLoading,
+    createUserManual,
+    navigate,
   } = ctx;
 
   const candidates = users.filter((u) => u.isActive !== false || u.isDeleted).filter((u) => !u.isProvisioned || u.isDeleted);
@@ -33,6 +38,18 @@ export function MemberCreatePage({ ctx }) {
   const selectedName = splitDisplayName(selected?.displayName);
   const selectedFirstName = selected?.firstName || selectedName.firstName || "";
   const selectedLastName = selected?.lastName || selectedName.lastName || "";
+
+  const [manual, setManual] = React.useState({
+    username: "",
+    displayName: "",
+    firstName: "",
+    lastName: "",
+    email: "",
+    phone: "",
+    department: "Finance",
+    grade: "EMPLOYEE",
+  });
+  const [manualLoading, setManualLoading] = React.useState(false);
 
   return (
     <div style={{ marginTop: 20 }}>
@@ -44,6 +61,91 @@ export function MemberCreatePage({ ctx }) {
       </div>
 
       <div style={{ padding: "12px 14px", border: "1px solid var(--tm-border)", borderRadius: "var(--tm-radius-md)", background: "var(--tm-surface)" }}>
+        {isAdmin && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, color: "var(--tm-text-main)", marginBottom: 8 }}>
+              Création manuelle (Admin)
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, maxWidth: 760 }}>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Username</div>
+                <input value={manual.username} onChange={(e) => setManual({ ...manual, username: e.target.value })} className="tm-input" />
+              </div>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Display name</div>
+                <input value={manual.displayName} onChange={(e) => setManual({ ...manual, displayName: e.target.value })} className="tm-input" />
+              </div>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Prénom</div>
+                <input value={manual.firstName} onChange={(e) => setManual({ ...manual, firstName: e.target.value })} className="tm-input" />
+              </div>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Nom</div>
+                <input value={manual.lastName} onChange={(e) => setManual({ ...manual, lastName: e.target.value })} className="tm-input" />
+              </div>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Email</div>
+                <input value={manual.email} onChange={(e) => setManual({ ...manual, email: e.target.value })} className="tm-input" />
+              </div>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Téléphone</div>
+                <input value={manual.phone} onChange={(e) => setManual({ ...manual, phone: e.target.value })} className="tm-input" />
+              </div>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Pôle</div>
+                <select value={manual.department} onChange={(e) => setManual({ ...manual, department: e.target.value })} className="tm-input">
+                  {DEPARTMENTS.map((d) => (<option key={d} value={d}>{d}</option>))}
+                </select>
+              </div>
+              <div>
+                <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Grade</div>
+                <select value={manual.grade} onChange={(e) => setManual({ ...manual, grade: e.target.value })} className="tm-input">
+                  <option value="EMPLOYEE">Employé</option>
+                  <option value="MANAGER">Manager</option>
+                  <option value="ADMIN">Admin</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="tm-btn tm-btn-primary"
+                disabled={manualLoading || !manual.username || !manual.displayName}
+                onClick={async () => {
+                  setManualLoading(true);
+                  try {
+                    const roles =
+                      manual.grade === "ADMIN"
+                        ? ["ADMIN", "MANAGER"]
+                        : manual.grade === "MANAGER"
+                          ? ["MANAGER"]
+                          : ["EMPLOYEE"];
+                    await createUserManual({
+                      username: manual.username.trim(),
+                      displayName: manual.displayName.trim(),
+                      firstName: manual.firstName.trim() || null,
+                      lastName: manual.lastName.trim() || null,
+                      email: manual.email.trim() || null,
+                      phone: manual.phone.trim() || null,
+                      department: manual.department || null,
+                      roles,
+                      isProvisioned: true,
+                    });
+                    navigate("/members");
+                  } finally {
+                    setManualLoading(false);
+                  }
+                }}
+              >
+                {manualLoading ? "Création…" : "Créer"}
+              </button>
+            </div>
+
+            <div style={{ height: 1, background: "var(--tm-border)", marginTop: 16 }} />
+          </div>
+        )}
+
         <div style={{ marginBottom: 12, position: "relative" }}>
           <div className="tm-text-muted" style={{ fontSize: 11, marginBottom: 4 }}>Utilisateur</div>
           <input
