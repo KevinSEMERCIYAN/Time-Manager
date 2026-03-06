@@ -5,19 +5,25 @@ module.exports = (ctx) => {
   const { prisma, authRequired, isAdmin, isManager, isManagerOfTeam, audit } = ctx;
 
   router.get("/teams", authRequired, async (req, res) => {
+    const teamInclude = {
+      members: { select: { userId: true } },
+      manager: { select: { id: true, username: true, displayName: true, roles: true } },
+      _count: { select: { members: true } },
+    };
+
     let teams;
     if (isAdmin(req.user)) {
-      teams = await prisma.team.findMany({ include: { members: true }, orderBy: { name: "asc" } });
+      teams = await prisma.team.findMany({ include: teamInclude, orderBy: { name: "asc" } });
     } else if (isManager(req.user)) {
       teams = await prisma.team.findMany({
         where: { managerUserId: req.user.id },
-        include: { members: true },
+        include: teamInclude,
         orderBy: { name: "asc" },
       });
     } else {
       const memberships = await prisma.teamMember.findMany({
         where: { userId: req.user.id },
-        include: { team: true },
+        include: { team: { include: teamInclude } },
       });
       teams = memberships.map((m) => m.team).filter(Boolean);
     }

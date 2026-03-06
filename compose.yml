@@ -18,6 +18,7 @@ services:
 
   backend:
     build: ./backend
+    command: sh -lc "npx prisma db push && npm run dev"
     environment:
       TZ: "Europe/Paris"
       DATABASE_URL: mysql://timemanager:timemanager@db:3306/timemanager
@@ -33,7 +34,7 @@ services:
 
       LDAP_URL: ldaps://AD-01.primebank.local:636
       LDAP_BASE_DN: DC=primebank,DC=local
-      LDAP_BIND_DN: administrateur@primebank.local
+      LDAP_BIND_DN: "${LDAP_BIND_DN}"
       LDAP_BIND_PASSWORD: "${LDAP_BIND_PASSWORD}"
       LDAP_USER_FILTER: "(sAMAccountName={{username}})"
       LDAP_CA_CERT_PATH: /app/certs/primebank-root-ca.cer
@@ -44,7 +45,7 @@ services:
       LDAP_USERS_BASE_DN: "OU=Utilisateurs,DC=primebank,DC=local"
       LDAP_USERS_FILTER: "(&(objectClass=user)(!(objectClass=computer)))"
       LDAP_SYNC_EXCLUDE_USERS: "svc_timemanager,svc_ldap_reader"
-      AD_SYNC_ENABLED: "true"
+      AD_SYNC_ENABLED: "false"
       AD_SYNC_INTERVAL_MINUTES: "2"
 
       JWT_SECRET: "${JWT_SECRET}"

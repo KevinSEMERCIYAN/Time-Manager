@@ -11,8 +11,13 @@ export function DashboardPage({ ctx }) {
     users,
     reportTeamId,
     setReportTeamId,
+    reportTeamText,
+    setReportTeamText,
     reportUserId,
     setReportUserId,
+    reportUserText,
+    setReportUserText,
+    reportService,
     loadTeamReport,
     loadUserReport,
     teamReportLoading,
@@ -30,41 +35,114 @@ export function DashboardPage({ ctx }) {
     exportCsvLoading,
     exportCsv,
   } = ctx;
-
-  const workSeriesRaw = report?.dailyWorked?.map((d) => d.hours ?? (d.minutes || 0) / 60) || [];
-  const lateSeriesRaw = report?.dailyLatenessRate?.map((d) => d.value) || [];
-  const attSeriesRaw = report?.dailyAttendanceRate?.map((d) => d.value) || [];
-  const absSeriesRaw = report?.dailyAbsenceRate?.map((d) => d.value) || [];
-  const baseLen = Math.max(workSeriesRaw.length, lateSeriesRaw.length, attSeriesRaw.length, absSeriesRaw.length);
-  const bucket = period === "year" ? Math.max(1, Math.ceil(baseLen / 12)) : 1;
-  const slices = period === "year" ? { count: 12 } : period === "month" ? { count: 4 } : { count: 7 };
-
-  const buildAxisLabels = (len) => {
-    if (!len || len < 2) return [];
-    if (period === "week") {
-      const days = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-      return Array.from({ length: len }, (_, i) => {
-        const idx = Math.round((i / (len - 1)) * (days.length - 1));
-        return days[idx];
-      });
-    }
-    if (period === "month") {
-      return Array.from({ length: len }, (_, i) => String(i + 1));
-    }
-    if (len <= 12) {
-      const months = ["Jan", "Fev", "Mar", "Avr", "Mai", "Juin", "Juil", "Aou", "Sep", "Oct", "Nov", "Dec"];
-      return Array.from({ length: len }, (_, i) => months[i] || "");
-    }
-    const months = ["Jan", "Fev", "Mar", "Avr", "Mai", "Juin", "Juil", "Aou", "Sep", "Oct", "Nov", "Dec"];
-    return Array.from({ length: len }, (_, i) => months[Math.floor((i / len) * 12)]);
+  const roleLabel = (u) => {
+    const roles = Array.isArray(u?.roles) ? u.roles : [];
+    if (roles.includes("ADMIN")) return "Admin";
+    if (roles.includes("MANAGER")) return "Manager";
+    return "Employe";
   };
 
-  const workSeries = (bucket > 1 ? compressSeries(workSeriesRaw, bucket) : workSeriesRaw).slice(0, period === "year" ? 12 : undefined);
-  const lateSeries = (bucket > 1 ? compressSeries(lateSeriesRaw, bucket) : lateSeriesRaw).slice(0, period === "year" ? 12 : undefined);
-  const attSeries = (bucket > 1 ? compressSeries(attSeriesRaw, bucket) : attSeriesRaw).slice(0, period === "year" ? 12 : undefined);
-  const absSeries = (bucket > 1 ? compressSeries(absSeriesRaw, bucket) : absSeriesRaw).slice(0, period === "year" ? 12 : undefined);
-  const axisLabels = buildAxisLabels(workSeries.length || lateSeries.length || attSeries.length || absSeries.length);
-  const maxTicks = period === "week" ? 7 : period === "month" ? 8 : 12;
+  const teamLabel = (u) => {
+    const memberships = Array.isArray(u?.teams) ? u.teams : [];
+    if (!memberships.length) return "Sans equipe";
+    return memberships.map((t) => t.name).join(", ");
+  };
+
+  const visibleTeams = React.useMemo(() => {
+    return (teams || []).filter((t) => reportService === "ALL" || (t.department || "") === reportService);
+  }, [teams, reportService]);
+
+  const visibleUsers = React.useMemo(() => {
+    return (users || [])
+      .filter((u) => u.isProvisioned)
+      .filter((u) => reportService === "ALL" || (u.department || "") === reportService)
+      .filter((u) => {
+        if (isAdmin) {
+          const rolesList = Array.isArray(u?.roles) ? u.roles : [];
+          return rolesList.includes("EMPLOYEE") || rolesList.includes("MANAGER");
+        }
+        return !Array.isArray(u?.roles) || u.roles.includes("EMPLOYEE");
+      });
+  }, [users, isAdmin, reportService]);
+
+  const toEntries = (arr, getter) =>
+    Array.isArray(arr)
+      ? arr
+          .map((row) => ({
+            date: String(row?.date || ""),
+            value: Number(getter(row)),
+          }))
+          .filter((row) => row.date && Number.isFinite(row.value))
+      : [];
+
+  const workEntries = toEntries(report?.dailyWorked, (d) => d.hours ?? (d.minutes || 0) / 60);
+  const lateEntries = toEntries(report?.dailyLatenessRate, (d) => d.value);
+  const attEntries = toEntries(report?.dailyAttendanceRate, (d) => d.value);
+  const absEntries = toEntries(report?.dailyAbsenceRate, (d) => d.value);
+
+  const aggregateSeries = React.useCallback((entries, mode, metricType) => {
+    if (!entries.length) return { labels: [], values: [] };
+    const map = new Map();
+    for (const entry of entries) {
+      const d = new Date(`${entry.date}T00:00:00.000Z`);
+      const y = d.getUTCFullYear();
+      const m = d.getUTCMonth() + 1;
+      let key = entry.date;
+      let label = entry.date.slice(5);
+      if (mode === "year") {
+        key = `${y}-${String(m).padStart(2, "0")}`;
+        label = d.toLocaleDateString("fr-FR", { month: "short", timeZone: "UTC" });
+      } else if (mode === "month") {
+        const first = new Date(Date.UTC(y, d.getUTCMonth(), 1));
+        const week = Math.floor((d.getUTCDate() + first.getUTCDay() - 1) / 7) + 1;
+        key = `${y}-${String(m).padStart(2, "0")}-S${week}`;
+        label = `S${week}`;
+      } else {
+        label = d.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", timeZone: "UTC" });
+      }
+      if (!map.has(key)) map.set(key, { label, sum: 0, count: 0 });
+      const bucket = map.get(key);
+      bucket.sum += entry.value;
+      bucket.count += 1;
+    }
+    const values = Array.from(map.values()).map((bucket) => {
+      if (metricType === "sum") return bucket.sum;
+      return bucket.count ? bucket.sum / bucket.count : 0;
+    });
+    const labels = Array.from(map.values()).map((bucket) => bucket.label);
+    return { labels, values };
+  }, []);
+
+  const workAgg = aggregateSeries(workEntries, period, "sum");
+  const lateAgg = aggregateSeries(lateEntries, period, "avg");
+  const attAgg = aggregateSeries(attEntries, period, "avg");
+  const absAgg = aggregateSeries(absEntries, period, "avg");
+  const axisLabels = workAgg.labels.length ? workAgg.labels : lateAgg.labels.length ? lateAgg.labels : attAgg.labels.length ? attAgg.labels : absAgg.labels;
+  const workSeries = workAgg.values;
+  const lateSeries = lateAgg.values;
+  const attSeries = attAgg.values;
+  const absSeries = absAgg.values;
+  const maxTicks = period === "week" ? 7 : period === "month" ? 6 : 12;
+
+  React.useEffect(() => {
+    if (reportTeamId && !visibleTeams.some((t) => t.id === reportTeamId)) {
+      setReportTeamId("");
+      setReportTeamText("");
+    }
+    if (reportUserId && !visibleUsers.some((u) => u.id === reportUserId)) {
+      setReportUserId("");
+      setReportUserText("");
+    }
+  }, [
+    reportTeamId,
+    reportUserId,
+    visibleTeams,
+    visibleUsers,
+    setReportTeamId,
+    setReportTeamText,
+    setReportUserId,
+    setReportUserText,
+  ]);
 
   return (
     <>
@@ -96,11 +174,9 @@ export function DashboardPage({ ctx }) {
               unit: "h",
               formatValue: (v) => `${v.toFixed(2)}h`,
               lineWidth: period === "year" ? 1 : 1.2,
-              smoothing: period === "year" ? 1 : 2,
-              exaggerate: period === "year" ? 3.0 : 2.2,
-              slices,
               labels: axisLabels,
               maxTicks,
+              baseZero: true,
             })}
           </div>
         )}
@@ -122,9 +198,6 @@ export function DashboardPage({ ctx }) {
             unit: "%",
             formatValue: (v) => `${v.toFixed(1)}%`,
             lineWidth: period === "year" ? 1 : 1.2,
-            smoothing: period === "year" ? 1 : 2,
-            exaggerate: period === "year" ? 3.2 : 2.4,
-            slices,
             labels: axisLabels,
             maxTicks,
             baseZero: true,
@@ -148,11 +221,9 @@ export function DashboardPage({ ctx }) {
             unit: "h",
             formatValue: (v) => `${v.toFixed(2)}h`,
             lineWidth: period === "year" ? 1 : 1.2,
-            smoothing: period === "year" ? 1 : 2,
-            exaggerate: period === "year" ? 3.0 : 2.2,
-            slices,
             labels: axisLabels,
             maxTicks,
+            baseZero: true,
           })}
         </div>
 
@@ -173,11 +244,9 @@ export function DashboardPage({ ctx }) {
             unit: "%",
             formatValue: (v) => `${v.toFixed(1)}%`,
             lineWidth: period === "year" ? 1 : 1.2,
-            smoothing: period === "year" ? 1 : 2,
-            exaggerate: period === "year" ? 3.0 : 2.2,
-            slices,
             labels: axisLabels,
             maxTicks,
+            baseZero: true,
           })}
         </div>
 
@@ -198,9 +267,6 @@ export function DashboardPage({ ctx }) {
             unit: "%",
             formatValue: (v) => `${v.toFixed(1)}%`,
             lineWidth: period === "year" ? 1 : 1.2,
-            smoothing: period === "year" ? 1 : 2,
-            exaggerate: period === "year" ? 3.2 : 2.6,
-            slices,
             labels: axisLabels,
             maxTicks,
             baseZero: true,
@@ -214,21 +280,64 @@ export function DashboardPage({ ctx }) {
             <div className="tm-text-muted" style={{ marginBottom: 6 }}>
               Reporting equipe (daily/weekly)
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "grid", gap: 8 }}>
+              <input
+                list="tm-team-report-list"
+                value={reportTeamText}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setReportTeamText(val);
+                  const exact = visibleTeams.find((t) => (t.name || "").toLowerCase() === val.trim().toLowerCase());
+                  if (exact) setReportTeamId(exact.id);
+                }}
+                placeholder="Rechercher equipe (texte)"
+                className="tm-input"
+              />
+              <datalist id="tm-team-report-list">
+                {visibleTeams.map((t) => (
+                  <option key={t.id} value={t.name}>
+                    {(t.department || "Sans service")}
+                  </option>
+                ))}
+              </datalist>
               <select
                 value={reportTeamId}
-                onChange={(e) => setReportTeamId(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setReportTeamId(next);
+                  const selected = visibleTeams.find((t) => t.id === next);
+                  setReportTeamText(selected?.name || "");
+                }}
                 className="tm-input"
-                style={{ minWidth: 200 }}
               >
                 <option value="">Selectionner equipe...</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
+                {visibleTeams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name} - {t.department || "Sans service"}</option>
                 ))}
               </select>
-              <button type="button" onClick={loadTeamReport} className="tm-btn tm-btn-primary" style={{ padding: "6px 10px" }} disabled={teamReportLoading || !report?.from || !report?.to} title={!report?.from || !report?.to ? "Sélectionnez une période (filtres ci-dessus) puis rechargez le rapport principal." : undefined}>
+              <div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!reportTeamId && reportTeamText.trim()) {
+                    const match = visibleTeams.find((t) => (t.name || "").toLowerCase().includes(reportTeamText.trim().toLowerCase()));
+                    if (match) {
+                      setReportTeamId(match.id);
+                      setReportTeamText(match.name || "");
+                      loadTeamReport(match.id);
+                      return;
+                    }
+                  }
+                  loadTeamReport();
+                }}
+                className="tm-btn tm-btn-primary"
+                style={{ padding: "6px 10px" }}
+                disabled={teamReportLoading || !report?.from || !report?.to}
+                title={!report?.from || !report?.to ? "Sélectionnez une période (filtres ci-dessus) puis rechargez le rapport principal." : undefined}
+              >
                 {teamReportLoading ? "Chargement…" : "Charger"}
               </button>
+              </div>
             </div>
             {(!report?.from || !report?.to) && <div className="tm-text-muted" style={{ fontSize: 11, marginTop: 4 }}>Période requise : utilisez les filtres ci-dessus.</div>}
             {teamReport && (
@@ -245,30 +354,77 @@ export function DashboardPage({ ctx }) {
             <div className="tm-text-muted" style={{ marginBottom: 6 }}>
               Reporting employe (daily/weekly)
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "grid", gap: 8 }}>
+              <input
+                list="tm-user-report-list"
+                value={reportUserText}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setReportUserText(val);
+                  const exact = visibleUsers.find((u) => {
+                    const label = `${u.displayName || u.username} (${u.username || "-"}) - ${roleLabel(u)} - ${u.department || "Sans service"} - ${teamLabel(u)}`;
+                    return label.toLowerCase() === val.trim().toLowerCase();
+                  });
+                  if (exact) setReportUserId(exact.id);
+                }}
+                placeholder="Rechercher utilisateur (texte)"
+                className="tm-input"
+              />
+              <datalist id="tm-user-report-list">
+                {visibleUsers.map((u) => (
+                  <option
+                    key={u.id}
+                    value={`${u.displayName || u.username} (${u.username || "-"}) - ${roleLabel(u)} - ${u.department || "Sans service"} - ${teamLabel(u)}`}
+                  />
+                ))}
+              </datalist>
               <select
                 value={reportUserId}
-                onChange={(e) => setReportUserId(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setReportUserId(next);
+                  const selected = visibleUsers.find((u) => u.id === next);
+                  if (selected) {
+                    setReportUserText(`${selected.displayName || selected.username} (${selected.username || "-"}) - ${roleLabel(selected)} - ${selected.department || "Sans service"} - ${teamLabel(selected)}`);
+                  } else {
+                    setReportUserText("");
+                  }
+                }}
                 className="tm-input"
-                style={{ minWidth: 200 }}
               >
                 <option value="">Selectionner utilisateur...</option>
-                {users
-                  .filter((u) => u.isProvisioned)
-                  .filter((u) => {
-                    if (isAdmin) {
-                      const rolesList = Array.isArray(u?.roles) ? u.roles : [];
-                      return rolesList.includes("EMPLOYEE") || rolesList.includes("MANAGER");
-                    }
-                    return !Array.isArray(u?.roles) || u.roles.includes("EMPLOYEE");
-                  })
-                  .map((u) => (
-                    <option key={u.id} value={u.id}>{u.displayName || u.username}</option>
-                  ))}
+                {visibleUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {`${u.displayName || u.username} (${u.username || "-"}) - ${roleLabel(u)} - ${u.department || "Sans service"} - ${teamLabel(u)}`}
+                  </option>
+                ))}
               </select>
-              <button type="button" onClick={loadUserReport} className="tm-btn tm-btn-primary" style={{ padding: "6px 10px" }} disabled={userReportLoading || !report?.from || !report?.to} title={!report?.from || !report?.to ? "Sélectionnez une période (filtres ci-dessus) puis rechargez le rapport principal." : undefined}>
+              <div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!reportUserId && reportUserText.trim()) {
+                    const match = visibleUsers.find((u) => {
+                      const label = `${u.displayName || u.username} (${u.username || "-"}) - ${roleLabel(u)} - ${u.department || "Sans service"} - ${teamLabel(u)}`;
+                      return label.toLowerCase().includes(reportUserText.trim().toLowerCase());
+                    });
+                    if (match) {
+                      setReportUserId(match.id);
+                      setReportUserText(`${match.displayName || match.username} (${match.username || "-"}) - ${roleLabel(match)} - ${match.department || "Sans service"} - ${teamLabel(match)}`);
+                      loadUserReport(match.id);
+                      return;
+                    }
+                  }
+                  loadUserReport();
+                }}
+                className="tm-btn tm-btn-primary"
+                style={{ padding: "6px 10px" }}
+                disabled={userReportLoading || !report?.from || !report?.to}
+                title={!report?.from || !report?.to ? "Sélectionnez une période (filtres ci-dessus) puis rechargez le rapport principal." : undefined}
+              >
                 {userReportLoading ? "Chargement…" : "Charger"}
               </button>
+              </div>
             </div>
             {(!report?.from || !report?.to) && <div className="tm-text-muted" style={{ fontSize: 11, marginTop: 4 }}>Période requise : utilisez les filtres ci-dessus.</div>}
             {userReport && (

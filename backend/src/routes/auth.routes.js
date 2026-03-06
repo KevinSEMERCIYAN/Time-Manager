@@ -163,6 +163,7 @@ module.exports = (ctx) => {
       const { firstName, lastName } = splitDisplayName(displayName);
       const adDn = typeof u.dn === "string" ? u.dn : null;
       const adEmail = u.mail || null;
+      const department = getTeamFromDn(adDn);
       const teamName = AD_DERIVE_TEAM ? getTeamFromDn(adDn) : null;
 
       const user = await prisma.user.upsert({
@@ -173,6 +174,7 @@ module.exports = (ctx) => {
           lastName,
           roles,
           adDn,
+          department: department || undefined,
           email: adEmail || undefined,
         },
         create: {
@@ -182,6 +184,7 @@ module.exports = (ctx) => {
           lastName,
           roles,
           adDn,
+          department: department || undefined,
           email: adEmail || undefined,
           isProvisioned: false,
           isDeleted: false,

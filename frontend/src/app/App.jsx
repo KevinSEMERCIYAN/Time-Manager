@@ -49,7 +49,10 @@ export default function App() {
   const [teamReportLoading, setTeamReportLoading] = useState(false);
   const [userReportLoading, setUserReportLoading] = useState(false);
   const [reportTeamId, setReportTeamId] = useState("");
+  const [reportTeamText, setReportTeamText] = useState("");
   const [reportUserId, setReportUserId] = useState("");
+  const [reportUserText, setReportUserText] = useState("");
+  const [reportService, setReportService] = useState("ALL");
   const [seedLoading, setSeedLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [syncAdLoading, setSyncAdLoading] = useState(false);
@@ -180,7 +183,9 @@ export default function App() {
 
     try {
       const q = new URLSearchParams({ from: rawFrom, to: safeTo });
-      if (user?.id) q.set("userId", user.id);
+      // Admin/manager dashboard must aggregate global data; employee stays scoped to self.
+      if (user?.id && !isAdmin && !isManager) q.set("userId", user.id);
+      if ((isAdmin || isManager) && reportService && reportService !== "ALL") q.set("service", reportService);
       const data = await apiFetch(`/reports?${q.toString()}`);
       setReport({ ...data.summary, from: rawFrom, to: safeTo });
     } catch (err) {
@@ -190,12 +195,13 @@ export default function App() {
     }
   };
 
-  const loadTeamReport = async () => {
-    if (!reportTeamId || !report?.from || !report?.to) return;
+  const loadTeamReport = async (teamIdOverride) => {
+    const targetTeamId = teamIdOverride || reportTeamId;
+    if (!targetTeamId || !report?.from || !report?.to) return;
     try {
       setTeamReportLoading(true);
       setError("");
-      const data = await apiFetch(`/reports/team?from=${report.from}&to=${report.to}&teamId=${reportTeamId}`);
+      const data = await apiFetch(`/reports/team?from=${report.from}&to=${report.to}&teamId=${targetTeamId}`);
       setTeamReport(data);
     } catch (err) {
       setError(err.message);
@@ -204,12 +210,13 @@ export default function App() {
     }
   };
 
-  const loadUserReport = async () => {
-    if (!reportUserId || !report?.from || !report?.to) return;
+  const loadUserReport = async (userIdOverride) => {
+    const targetUserId = userIdOverride || reportUserId;
+    if (!targetUserId || !report?.from || !report?.to) return;
     try {
       setUserReportLoading(true);
       setError("");
-      const data = await apiFetch(`/reports/user?from=${report.from}&to=${report.to}&userId=${reportUserId}`);
+      const data = await apiFetch(`/reports/user?from=${report.from}&to=${report.to}&userId=${targetUserId}`);
       setUserReport(data);
     } catch (err) {
       setError(err.message);
@@ -622,7 +629,13 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     loadDashboard();
-  }, [user, period, rangeStart, rangeEnd]);
+  }, [user, period, rangeStart, rangeEnd, reportService]);
+
+  useEffect(() => {
+    if (!user || !isManager || isAdmin) return;
+    const dept = user.department || "ALL";
+    setReportService(dept);
+  }, [user, isManager, isAdmin]);
 
   useEffect(() => {
     if (!user) return;
@@ -664,8 +677,14 @@ export default function App() {
     setUsers,
     reportTeamId,
     setReportTeamId,
+    reportTeamText,
+    setReportTeamText,
     reportUserId,
     setReportUserId,
+    reportUserText,
+    setReportUserText,
+    reportService,
+    setReportService,
     loadTeamReport,
     loadUserReport,
     teamReportLoading,
@@ -765,15 +784,11 @@ export default function App() {
       <div
         className="tm-card"
         style={{
-          maxWidth: isWideLayout ? 620 : "min(1400px, 100% - 64px)",
-          margin: isWideLayout ? "80px auto" : "24px auto",
-          padding: isWideLayout ? "28px 36px" : 24,
+          maxWidth: isWideLayout ? 620 : "min(1780px, 100% - 24px)",
+          margin: isWideLayout ? "80px auto" : "14px auto",
+          padding: isWideLayout ? "28px 36px" : 34,
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: "var(--tm-text-main)" }}>TimeManager</h1>
-        <p className="tm-text-muted" style={{ marginTop: 6 }}>
-          {route === ROUTES.SIGN_IN || route === ROUTES.LANDING ? "Connexion via Windows Server (LDAPS)" : "Tableau de bord"}
-        </p>
         {authLoading ? <div className="tm-text-muted" style={{ fontSize: 13 }}>Chargement...</div> : content}
       </div>
 

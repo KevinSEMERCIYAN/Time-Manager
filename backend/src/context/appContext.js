@@ -21,6 +21,12 @@ const COOKIE_NAME = "tm_access";
 const REFRESH_COOKIE = "tm_refresh";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+const PLACEHOLDER_SECRETS = new Set([
+  "change-me",
+  "changeme",
+  "votre_mot_de_passe_ldap",
+  "your_ldap_password",
+]);
 
 const DEFAULT_SCHEDULE = {
   amStart: "09:00",
@@ -221,24 +227,15 @@ const isManagerOfTeam = async (actor, teamId) => {
 };
 
 const listAccessibleUsers = async (actor) => {
-  const loadEmployees = async () => {
-    const all = await prisma.user.findMany({
-      where: { isDeleted: false },
-      orderBy: { displayName: "asc" },
-    });
-    return all.filter((u) => Array.isArray(u.roles) && u.roles.includes("EMPLOYEE"));
-  };
-
   if (isAdmin(actor)) {
     return prisma.user.findMany({ orderBy: { displayName: "asc" } });
   }
   if (isManager(actor)) {
-    // Règle métier: un manager ne doit voir/gérer que les employés de SON pôle (department).
-    // Si le manager n'a pas de department défini, on ne lui expose que lui-même.
+    // Règle métier: un manager ne doit voir/gérer que les employés de SON pôle (OU/department).
     const self = await prisma.user.findUnique({ where: { id: actor.id } });
     if (!self || self.isDeleted) return [];
     const dept = self.department || actor.department || null;
-    if (!dept) return [self];
+    if (!dept) return [];
 
     const users = await prisma.user.findMany({
       where: {
@@ -247,13 +244,7 @@ const listAccessibleUsers = async (actor) => {
       },
       orderBy: { displayName: "asc" },
     });
-
-    // Par prudence, on s'assure de toujours inclure le manager lui-même.
-    const dedup = new Map();
-    for (const u of users) dedup.set(u.id, u);
-    dedup.set(self.id, self);
-
-    return Array.from(dedup.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+    return users.filter((u) => Array.isArray(u.roles) && u.roles.includes("EMPLOYEE"));
   }
   const self = await prisma.user.findUnique({ where: { id: actor.id } });
   return self && !self.isDeleted ? [self] : [];
@@ -334,6 +325,12 @@ const ldapSearchList = (client, base, options) =>
     });
   });
 
+const hasUsableLdapBindCredentials = (bindDn, bindPw) => {
+  if (!bindDn || !bindPw) return false;
+  const pw = String(bindPw).trim().toLowerCase();
+  return pw.length > 0 && !PLACEHOLDER_SECRETS.has(pw);
+};
+
 let adSyncRunning = false;
 const syncAdUsers = async () => {
   if (adSyncRunning) return { ok: true, skipped: true };
@@ -346,9 +343,13 @@ const syncAdUsers = async () => {
     process.env.LDAP_USERS_FILTER || "(&(objectClass=user)(!(objectClass=computer)))";
   const AD_DERIVE_TEAM = process.env.AD_DERIVE_TEAM === "true";
 
-  if (!BIND_DN || !BIND_PW) {
+  if (!hasUsableLdapBindCredentials(BIND_DN, BIND_PW)) {
     adSyncRunning = false;
-    throw new Error("LDAP bind credentials missing for AD sync");
+    return {
+      ok: false,
+      skipped: true,
+      reason: "LDAP bind credentials are missing or placeholder values",
+    };
   }
 
   const client = buildLdapClient();
@@ -362,6 +363,10 @@ const syncAdUsers = async () => {
     const users = await ldapSearchList(client, USERS_BASE_DN, {
       scope: "sub",
       filter: USERS_FILTER,
+      paged: {
+        pageSize: 500,
+        pagePause: false,
+      },
       attributes: [
         "dn",
         "sAMAccountName",
@@ -399,6 +404,7 @@ const syncAdUsers = async () => {
         adDn,
         email,
         phone,
+        department: getTeamFromDn(adDn),
         isActive,
       };
 
@@ -471,6 +477,10 @@ const syncAdUsers = async () => {
 
 const startAdSyncScheduler = () => {
   if (!AD_SYNC_ENABLED || AD_SYNC_INTERVAL_MINUTES <= 0) return;
+  if (!hasUsableLdapBindCredentials(process.env.LDAP_BIND_DN, process.env.LDAP_BIND_PASSWORD)) {
+    console.warn("AD sync disabled: configure LDAP_BIND_DN/LDAP_BIND_PASSWORD with valid values.");
+    return;
+  }
   const intervalMs = AD_SYNC_INTERVAL_MINUTES * 60 * 1000;
   setTimeout(() => {
     syncAdUsers().catch((err) => console.error("AD sync failed:", err?.message || err));

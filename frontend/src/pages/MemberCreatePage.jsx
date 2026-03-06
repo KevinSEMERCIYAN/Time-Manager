@@ -34,6 +34,13 @@ export function MemberCreatePage({ ctx }) {
 
   const candidates = users.filter((u) => u.isActive !== false || u.isDeleted).filter((u) => !u.isProvisioned || u.isDeleted);
   const filtered = candidates.filter((u) => `${u.displayName || ""} ${u.username || ""}`.toLowerCase().includes(createSearch.toLowerCase()));
+  const roleLabel = (user) => {
+    const roles = Array.isArray(user?.roles) ? user.roles : [];
+    if (roles.includes("ADMIN")) return "Admin";
+    if (roles.includes("MANAGER")) return "Manager";
+    if (roles.includes("EMPLOYEE")) return "Employé";
+    return "Sans rôle";
+  };
   const selected = users.find((u) => u.id === createUserId);
   const selectedName = splitDisplayName(selected?.displayName);
   const selectedFirstName = selected?.firstName || selectedName.firstName || "";
@@ -180,6 +187,7 @@ export function MemberCreatePage({ ctx }) {
                     style={{ width: "100%", textAlign: "left", border: "none", background: "transparent", padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "var(--tm-text-main)" }}
                   >
                     {u.displayName || u.username} ({u.username})
+                    {isAdmin ? ` - ${roleLabel(u)}` : ""}
                   </button>
                 ))
               ) : (

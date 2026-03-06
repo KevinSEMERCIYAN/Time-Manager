@@ -16,11 +16,12 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
     setRangeStart,
     rangeEnd,
     setRangeEnd,
+    teams,
+    users,
+    reportService,
+    setReportService,
     reportLoading,
     onLogout,
-    users,
-    impersonateUser,
-    devLoginAs,
   } = ctx;
 
   const isActive = (path) => path === route || (path === "/members" && route.startsWith("/members/"));
@@ -33,6 +34,17 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
       {label}
     </button>
   );
+
+  const serviceOptions = React.useMemo(() => {
+    const out = new Set();
+    (teams || []).forEach((t) => {
+      if (t?.department) out.add(t.department);
+    });
+    (users || []).forEach((u) => {
+      if (u?.department) out.add(u.department);
+    });
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+  }, [teams, users]);
 
   return (
     <div className="tm-dashboard-shell">
@@ -55,7 +67,7 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
           </div>
 
           <div className="tm-topbar-search-row">
-            <div className="tm-topbar-select-group" style={{ flexWrap: "wrap" }}>
+            <div className="tm-topbar-select-group">
               {navBtn("/dashboard", "Dashboard")}
               {navBtn("/my-clocks", "Mes pointages")}
               {navBtn("/profile", "Mon profil")}
@@ -66,98 +78,6 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
         </div>
 
         <div className="tm-topbar-right">
-          <div style={{ display: "flex", gap: 4, marginRight: 4 }}>
-              <button
-                type="button"
-                className="tm-topbar-pill"
-                style={{ fontSize: 11 }}
-                onClick={() => {
-                  if (!isAdmin) {
-                    devLoginAs("employee");
-                    return;
-                  }
-                  // En mode admin, on privilégie un compte de démo riche (employee01) pour la projection.
-                  const preferred = (users || []).find((u) => u.username === "employee01");
-                  if (preferred) {
-                    impersonateUser(preferred.id);
-                    return;
-                  }
-                  const target = (users || []).find((u) => {
-                    const r = Array.isArray(u.roles) ? u.roles : [];
-                    const isEmployee = r.includes("EMPLOYEE") || r.includes("ROLE_EMPLOYEE");
-                    const isManagerRole = r.includes("MANAGER") || r.includes("ROLE_MANAGER");
-                    const isAdminRole = r.includes("ADMIN") || r.includes("ROLE_ADMIN");
-                    return isEmployee && !isManagerRole && !isAdminRole;
-                  });
-                  if (target) {
-                    impersonateUser(target.id);
-                  } else {
-                    devLoginAs("employee");
-                  }
-                }}
-              >
-                Vue employé
-              </button>
-              <button
-                type="button"
-                className="tm-topbar-pill"
-                style={{ fontSize: 11 }}
-                onClick={() => {
-                  if (!isAdmin) {
-                    devLoginAs("manager");
-                    return;
-                  }
-                  // En mode admin, on privilégie le compte de démo "manager" s'il existe.
-                  const preferred = (users || []).find((u) => u.username === "manager");
-                  if (preferred) {
-                    impersonateUser(preferred.id);
-                    return;
-                  }
-                  const target = (users || []).find((u) => {
-                    const r = Array.isArray(u.roles) ? u.roles : [];
-                    const isManagerRole = r.includes("MANAGER") || r.includes("ROLE_MANAGER");
-                    const isAdminRole = r.includes("ADMIN") || r.includes("ROLE_ADMIN");
-                    return isManagerRole && !isAdminRole;
-                  });
-                  if (target) {
-                    impersonateUser(target.id);
-                  } else {
-                    devLoginAs("manager");
-                  }
-                }}
-              >
-                Vue manager
-              </button>
-              <button
-                type="button"
-                className="tm-topbar-pill"
-                style={{ fontSize: 11 }}
-                onClick={() => {
-                  if (!isAdmin) {
-                    devLoginAs("admin");
-                    return;
-                  }
-                  // En mode admin, on revient en priorité sur le compte de démo "admin".
-                  const preferred = (users || []).find((u) => u.username === "admin");
-                  if (preferred) {
-                    impersonateUser(preferred.id);
-                    return;
-                  }
-                  const target = (users || []).find((u) => {
-                    const r = Array.isArray(u.roles) ? u.roles : [];
-                    return r.includes("ADMIN") || r.includes("ROLE_ADMIN");
-                  });
-                  if (target) {
-                    impersonateUser(target.id);
-                  } else {
-                    devLoginAs("admin");
-                  }
-                }}
-              >
-                Vue admin
-              </button>
-            </div>
-
           <button
             className="tm-icon-button"
             aria-label="Messages"
@@ -228,12 +148,29 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
               )}
             </div>
 
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
+              {(isAdmin || isManager) && (
+                <select
+                  value={reportService}
+                  onChange={(e) => setReportService(e.target.value)}
+                  className="tm-input"
+                  style={{ minWidth: 170 }}
+                  disabled={isManager && !isAdmin}
+                >
+                  <option value="ALL">Tous services</option>
+                  {serviceOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              )}
               <input
                 type="date"
                 value={rangeStart}
                 onChange={(e) => setRangeStart(e.target.value)}
                 className="tm-input"
+                style={{ minWidth: 170 }}
               />
               <span className="tm-text-muted">à</span>
               <input
@@ -241,6 +178,7 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
                 value={rangeEnd}
                 onChange={(e) => setRangeEnd(e.target.value)}
                 className="tm-input"
+                style={{ minWidth: 170 }}
               />
               {(rangeStart || rangeEnd) && (
                 <button
