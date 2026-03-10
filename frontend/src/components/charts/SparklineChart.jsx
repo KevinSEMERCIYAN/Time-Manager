@@ -5,7 +5,7 @@ export function SparklineChart({ series, labels, id, color = "#3b82f6", options 
   const canvasRef = useRef(null);
   const chartHeight = options.height ?? 96;
   const lineWidth = options.lineWidth ?? 2;
-  const tension = options.tension ?? 0.35;
+  const tension = options.tension ?? 0;
   const fillColor = options.fillColor ?? color;
   const baseZero = options.baseZero ?? false;
   const unit = options.unit ?? "";
@@ -57,7 +57,7 @@ export function SparklineChart({ series, labels, id, color = "#3b82f6", options 
         datasets: [
           {
             label: options.label || "",
-            data: series,
+            data: values,
             borderColor: color,
             backgroundColor: `${fillColor}22`,
             borderWidth: lineWidth,
@@ -81,7 +81,7 @@ export function SparklineChart({ series, labels, id, color = "#3b82f6", options 
             ticks: {
               color: "#374151",
               maxTicksLimit: options.maxTicks ?? 6,
-              autoSkip: true,
+              autoSkip: options.forceAllTicks ? false : true,
               maxRotation: 0,
               minRotation: 0,
               padding: 6,

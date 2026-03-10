@@ -76,9 +76,31 @@ export function DashboardPage({ ctx }) {
       : [];
 
   const workEntries = toEntries(report?.dailyWorked, (d) => d.hours ?? (d.minutes || 0) / 60);
+  const averageWorkEntries = toEntries(report?.dailyAverageWorked, (d) => d.hours ?? 0);
   const lateEntries = toEntries(report?.dailyLatenessRate, (d) => d.value);
   const attEntries = toEntries(report?.dailyAttendanceRate, (d) => d.value);
   const absEntries = toEntries(report?.dailyAbsenceRate, (d) => d.value);
+  const expectedShiftEntries = toEntries(report?.dailyExpectedShiftSeries, (d) => d.value);
+
+  const expectedByDate = React.useMemo(() => {
+    const m = new Map();
+    for (const entry of expectedShiftEntries) m.set(entry.date, entry.value);
+    return m;
+  }, [expectedShiftEntries]);
+
+  const keepWorkingDays = React.useCallback(
+    (entries) => entries.filter((entry) => (expectedByDate.get(entry.date) || 0) > 0),
+    [expectedByDate]
+  );
+  const filterEntriesForCharts = React.useCallback(
+    (entries) => (period === "year" ? entries : keepWorkingDays(entries)),
+    [period, keepWorkingDays]
+  );
+
+  const resolveBucketMode = React.useCallback((entries, selectedPeriod) => {
+    if (selectedPeriod === "year") return "year";
+    return selectedPeriod;
+  }, []);
 
   const aggregateSeries = React.useCallback((entries, mode, metricType) => {
     if (!entries.length) return { labels: [], values: [] };
@@ -88,15 +110,12 @@ export function DashboardPage({ ctx }) {
       const y = d.getUTCFullYear();
       const m = d.getUTCMonth() + 1;
       let key = entry.date;
-      let label = entry.date.slice(5);
+      let label = d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
       if (mode === "year") {
         key = `${y}-${String(m).padStart(2, "0")}`;
         label = d.toLocaleDateString("fr-FR", { month: "short", timeZone: "UTC" });
       } else if (mode === "month") {
-        const first = new Date(Date.UTC(y, d.getUTCMonth(), 1));
-        const week = Math.floor((d.getUTCDate() + first.getUTCDay() - 1) / 7) + 1;
-        key = `${y}-${String(m).padStart(2, "0")}-S${week}`;
-        label = `S${week}`;
+        label = String(d.getUTCDate()).padStart(2, "0");
       } else {
         label = d.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", timeZone: "UTC" });
       }
@@ -113,16 +132,30 @@ export function DashboardPage({ ctx }) {
     return { labels, values };
   }, []);
 
-  const workAgg = aggregateSeries(workEntries, period, "sum");
-  const lateAgg = aggregateSeries(lateEntries, period, "avg");
-  const attAgg = aggregateSeries(attEntries, period, "avg");
-  const absAgg = aggregateSeries(absEntries, period, "avg");
+  const chartWorkEntries = filterEntriesForCharts(workEntries);
+  const chartAverageWorkEntries = filterEntriesForCharts(averageWorkEntries);
+  const chartLateEntries = filterEntriesForCharts(lateEntries);
+  const chartAttEntries = filterEntriesForCharts(attEntries);
+  const chartAbsEntries = filterEntriesForCharts(absEntries);
+
+  const resolvedPeriod = resolveBucketMode(chartWorkEntries.length ? chartWorkEntries : workEntries, period);
+  const workAgg = aggregateSeries(chartWorkEntries.length ? chartWorkEntries : workEntries, resolvedPeriod, "sum");
+  const averageWorkAgg = aggregateSeries(
+    chartAverageWorkEntries.length ? chartAverageWorkEntries : (averageWorkEntries.length ? averageWorkEntries : workEntries),
+    resolvedPeriod,
+    "avg"
+  );
+  const lateAgg = aggregateSeries(chartLateEntries.length ? chartLateEntries : lateEntries, resolvedPeriod, "avg");
+  const attAgg = aggregateSeries(chartAttEntries.length ? chartAttEntries : attEntries, resolvedPeriod, "avg");
+  const absAgg = aggregateSeries(chartAbsEntries.length ? chartAbsEntries : absEntries, resolvedPeriod, "avg");
   const axisLabels = workAgg.labels.length ? workAgg.labels : lateAgg.labels.length ? lateAgg.labels : attAgg.labels.length ? attAgg.labels : absAgg.labels;
   const workSeries = workAgg.values;
+  const averageWorkSeries = averageWorkAgg.values;
   const lateSeries = lateAgg.values;
   const attSeries = attAgg.values;
   const absSeries = absAgg.values;
-  const maxTicks = period === "week" ? 7 : period === "month" ? 6 : 12;
+  const maxTicks = resolvedPeriod === "week" ? 7 : resolvedPeriod === "month" ? 8 : 12;
+  const forceAllYearTicks = resolvedPeriod === "year";
 
   React.useEffect(() => {
     if (reportTeamId && !visibleTeams.some((t) => t.id === reportTeamId)) {
@@ -170,14 +203,14 @@ export function DashboardPage({ ctx }) {
             <div className="tm-text-muted">Total travaille</div>
             <div style={{ fontSize: 24, fontWeight: 600 }}>{report ? `${report.workedHours.toFixed(2)}h` : "-"}</div>
             <div style={{ fontSize: 12, color: "var(--tm-text-muted)" }}>Sur periode</div>
-            {renderSparkline(workSeries, "total", "#38bdf8", {
-              unit: "h",
-              formatValue: (v) => `${v.toFixed(2)}h`,
-              lineWidth: period === "year" ? 1 : 1.2,
-              labels: axisLabels,
-              maxTicks,
-              baseZero: true,
-            })}
+          {renderSparkline(workSeries, "total", "#38bdf8", {
+            unit: "h",
+            formatValue: (v) => `${v.toFixed(2)}h`,
+            lineWidth: period === "year" ? 1 : 1.2,
+            labels: axisLabels,
+            maxTicks,
+            forceAllTicks: forceAllYearTicks,
+          })}
           </div>
         )}
 
@@ -201,6 +234,7 @@ export function DashboardPage({ ctx }) {
             labels: axisLabels,
             maxTicks,
             baseZero: true,
+            forceAllTicks: forceAllYearTicks,
           })}
         </div>
 
@@ -217,13 +251,13 @@ export function DashboardPage({ ctx }) {
           <div className="tm-text-muted">Temps travaille {isAdmin || isManager ? "moyen" : "personnel"}</div>
           <div style={{ fontSize: 24, fontWeight: 600 }}>{report ? `${report.averageHours.toFixed(2)}h` : "-"}</div>
           <div style={{ fontSize: 12, color: "var(--tm-text-muted)" }}>Sur periode</div>
-          {renderSparkline(workSeries, "work", "#60a5fa", {
+          {renderSparkline(averageWorkSeries, "work", "#60a5fa", {
             unit: "h",
             formatValue: (v) => `${v.toFixed(2)}h`,
             lineWidth: period === "year" ? 1 : 1.2,
             labels: axisLabels,
             maxTicks,
-            baseZero: true,
+            forceAllTicks: forceAllYearTicks,
           })}
         </div>
 
@@ -247,6 +281,7 @@ export function DashboardPage({ ctx }) {
             labels: axisLabels,
             maxTicks,
             baseZero: true,
+            forceAllTicks: forceAllYearTicks,
           })}
         </div>
 
@@ -270,6 +305,7 @@ export function DashboardPage({ ctx }) {
             labels: axisLabels,
             maxTicks,
             baseZero: true,
+            forceAllTicks: forceAllYearTicks,
           })}
         </div>
       </div>

@@ -2,6 +2,8 @@ const express = require("express");
 
 module.exports = (ctx) => {
   const router = express.Router();
+  const reportCache = new Map();
+  const REPORT_CACHE_TTL_MS = parseInt(process.env.REPORT_CACHE_TTL_MS || "20000", 10);
   const {
     prisma,
     authRequired,
@@ -18,6 +20,20 @@ module.exports = (ctx) => {
     const { from, to, teamId, userId } = req.query || {};
     const service = String(req.query?.service || "").trim();
     if (!from || !to) return res.status(400).json({ error: "from/to required" });
+    const cacheKey = JSON.stringify({
+      actorId: req.user.id,
+      actorRoles: req.user.roles || [],
+      actorDept: req.user.department || null,
+      from,
+      to,
+      teamId: teamId || null,
+      userId: userId || null,
+      service: service || null,
+    });
+    const cached = reportCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < REPORT_CACHE_TTL_MS) {
+      return res.json(cached.payload);
+    }
 
     const start = new Date(`${from}T00:00:00.000Z`);
     const end = new Date(`${to}T23:59:59.999Z`);
@@ -65,7 +81,10 @@ module.exports = (ctx) => {
               expectedHours: 0,
               absenceCount: 0,
               absenceRate: 0,
+              scopedUserCount: 0,
               dailyWorked: [],
+              dailyAverageWorked: [],
+              dailyExpectedShiftSeries: [],
               dailyLatenessRate: [],
               dailyAttendanceRate: [],
               dailyAbsenceRate: [],
@@ -98,7 +117,10 @@ module.exports = (ctx) => {
           expectedHours: 0,
           absenceCount: 0,
           absenceRate: 0,
+          scopedUserCount: 0,
           dailyWorked: [],
+          dailyAverageWorked: [],
+          dailyExpectedShiftSeries: [],
           dailyLatenessRate: [],
           dailyAttendanceRate: [],
           dailyAbsenceRate: [],
@@ -106,40 +128,38 @@ module.exports = (ctx) => {
       });
     }
 
-    const clockRows = await prisma.clock.findMany({
-      where: {
-        userId: { in: effectiveUserIds },
-        clockInAt: { gte: start, lte: end },
-      },
-      select: {
-        userId: true,
-        clockInAt: true,
-        workedMinutes: true,
-        lateMinutes: true,
-      },
-      orderBy: { clockInAt: "asc" },
-    });
+    const dateStart = new Date(`${from}T00:00:00.000Z`);
+    const dateEnd = new Date(`${to}T00:00:00.000Z`);
 
-    const groupedMap = new Map();
-    for (const row of clockRows) {
-      const dayKey = new Date(row.clockInAt).toISOString().slice(0, 10);
-      const key = `${row.userId}::${dayKey}`;
-      const prev = groupedMap.get(key);
-      if (!prev) {
-        groupedMap.set(key, {
-          userId: row.userId,
-          dayKey,
-          workedMinutes: Number(row.workedMinutes || 0),
-          lateMinutes: Number(row.lateMinutes || 0),
-        });
-      } else {
-        prev.workedMinutes += Number(row.workedMinutes || 0);
-        prev.lateMinutes += Number(row.lateMinutes || 0);
-      }
-    }
-    const grouped = Array.from(groupedMap.values());
+    const [activeUserRows, dailyRows, dailyLateRows] = await Promise.all([
+      prisma.clock.groupBy({
+        by: ["userId"],
+        where: {
+          userId: { in: effectiveUserIds },
+          date: { gte: dateStart, lte: dateEnd },
+        },
+      }),
+      prisma.clock.groupBy({
+        by: ["date"],
+        where: {
+          userId: { in: effectiveUserIds },
+          date: { gte: dateStart, lte: dateEnd },
+        },
+        _sum: { workedMinutes: true },
+        _count: { _all: true },
+        orderBy: { date: "asc" },
+      }),
+      prisma.$queryRawUnsafe(
+        "SELECT DATE(`date`) AS day, SUM(CASE WHEN `lateMinutes` > 0 THEN 1 ELSE 0 END) AS lateCount FROM `Clock` WHERE `userId` IN (" +
+          effectiveUserIds.map(() => "?").join(",") +
+          ") AND `date` >= ? AND `date` <= ? GROUP BY DATE(`date`)",
+        ...effectiveUserIds,
+        dateStart,
+        dateEnd
+      ),
+    ]);
 
-    if (!grouped.length) {
+    if (!dailyRows.length) {
       return res.json({
         summary: {
           totalHours: 0,
@@ -153,7 +173,10 @@ module.exports = (ctx) => {
           expectedHours: 0,
           absenceCount: 0,
           absenceRate: 0,
+          scopedUserCount: 0,
           dailyWorked: [],
+          dailyAverageWorked: [],
+          dailyExpectedShiftSeries: [],
           dailyLatenessRate: [],
           dailyAttendanceRate: [],
           dailyAbsenceRate: [],
@@ -163,7 +186,7 @@ module.exports = (ctx) => {
 
     // Vue globale/équipe: base KPI sur les utilisateurs réellement actifs dans la période.
     // Vue utilisateur (userId): conserver l'utilisateur demandé même sans activité.
-    const activeUserIdSet = new Set(grouped.map((g) => g.userId));
+    const activeUserIdSet = new Set(activeUserRows.map((r) => r.userId));
     const reportUsers = userId ? users : users.filter((u) => activeUserIdSet.has(u.id));
     if (!reportUsers.length) {
       return res.json({
@@ -179,7 +202,10 @@ module.exports = (ctx) => {
           expectedHours: 0,
           absenceCount: 0,
           absenceRate: 0,
+          scopedUserCount: 0,
           dailyWorked: [],
+          dailyAverageWorked: [],
+          dailyExpectedShiftSeries: [],
           dailyLatenessRate: [],
           dailyAttendanceRate: [],
           dailyAbsenceRate: [],
@@ -187,49 +213,36 @@ module.exports = (ctx) => {
       });
     }
 
-    let lateCount = 0;
-    let shiftCount = 0;
     let expectedShiftCount = 0;
     let workedMinutesTotal = 0;
+    let lateCount = 0;
+    let shiftCount = 0;
     const workedByDay = new Map();
     const dailyShiftCount = new Map();
     const dailyLateCount = new Map();
 
-    for (const row of grouped) {
-      const dayKey = row.dayKey;
-      const worked = Number(row.workedMinutes || 0);
-      const late = Number(row.lateMinutes || 0);
+    for (const row of dailyRows) {
+      const dayKey = new Date(row.date).toISOString().slice(0, 10);
+      const worked = Number(row._sum?.workedMinutes || 0);
+      const shifts = Number(row._count?._all || 0);
       workedMinutesTotal += worked;
-      shiftCount += 1; // 1 user-day
-      if (late > 0) lateCount += 1;
-      workedByDay.set(dayKey, (workedByDay.get(dayKey) || 0) + worked);
-      dailyShiftCount.set(dayKey, (dailyShiftCount.get(dayKey) || 0) + 1);
-      if (late > 0) dailyLateCount.set(dayKey, (dailyLateCount.get(dayKey) || 0) + 1);
+      shiftCount += shifts;
+      workedByDay.set(dayKey, worked);
+      dailyShiftCount.set(dayKey, shifts);
+    }
+    for (const row of dailyLateRows || []) {
+      const dayKey = new Date(row.day).toISOString().slice(0, 10);
+      const lates = Number(row.lateCount || 0);
+      lateCount += lates;
+      dailyLateCount.set(dayKey, lates);
     }
 
     let expectedMinutes = 0;
-    const activeRangeByUser = new Map();
-    let globalMinKey = null;
-    let globalMaxKey = null;
-    for (const row of grouped) {
-      const key = row.dayKey;
-      if (!globalMinKey || key < globalMinKey) globalMinKey = key;
-      if (!globalMaxKey || key > globalMaxKey) globalMaxKey = key;
-      const prev = activeRangeByUser.get(row.userId);
-      if (!prev) {
-        activeRangeByUser.set(row.userId, { startKey: key, endKey: key });
-      } else {
-        if (key < prev.startKey) prev.startKey = key;
-        if (key > prev.endKey) prev.endKey = key;
-      }
-    }
-
-    // Fenêtre KPI: intersection [from,to] avec les dates réellement présentes pour éviter
-    // de mesurer de faux "jours absents" hors couverture de données.
+    // Fenêtre KPI: utiliser toute la période demandée.
     const periodStartKey = from;
     const periodEndKey = to;
-    const metricsStartKey = userId ? periodStartKey : (globalMinKey && globalMinKey > periodStartKey ? globalMinKey : periodStartKey);
-    const metricsEndKey = userId ? periodEndKey : (globalMaxKey && globalMaxKey < periodEndKey ? globalMaxKey : periodEndKey);
+    const metricsStartKey = periodStartKey;
+    const metricsEndKey = periodEndKey;
     const dayKeys = [];
     for (let d = new Date(`${metricsStartKey}T00:00:00.000Z`); d <= new Date(`${metricsEndKey}T00:00:00.000Z`); d.setUTCDate(d.getUTCDate() + 1)) {
       dayKeys.push(d.toISOString().slice(0, 10));
@@ -241,18 +254,19 @@ module.exports = (ctx) => {
         const ref = new Date(Date.UTC(2026, 0, 4 + wd, 12, 0, 0)); // 2026-01-04 est un dimanche (0)
         minutesByWeekday[wd] = Math.max(0, expectedDailyHours(u, ref) * 60);
       }
-      const range = activeRangeByUser.get(u.id) || null;
       return {
         userId: u.id,
         minutesByWeekday,
-        startKey: range?.startKey || metricsStartKey,
-        endKey: range?.endKey || metricsEndKey,
+        startKey: metricsStartKey,
+        endKey: metricsEndKey,
       };
     });
     const totalHours = workedMinutesTotal / 60;
     const averageHours = reportUsers.length ? totalHours / reportUsers.length : 0;
 
     const dailyWorked = [];
+    const dailyAverageWorked = [];
+    const dailyExpectedShiftSeries = [];
     const dailyLatenessRate = [];
     const dailyAttendanceRate = [];
     const dailyAbsenceRate = [];
@@ -273,6 +287,8 @@ module.exports = (ctx) => {
       expectedShiftCount += dailyExpectedShifts;
 
       dailyWorked.push({ date: key, hours: worked / 60 });
+      dailyAverageWorked.push({ date: key, hours: reportUsers.length ? worked / 60 / reportUsers.length : 0 });
+      dailyExpectedShiftSeries.push({ date: key, value: dailyExpectedShifts });
       dailyLatenessRate.push({ date: key, value: dailyExpectedShifts ? (late / dailyExpectedShifts) * 100 : 0 });
       const dailyPresentShifts = dailyShiftCount.get(key) || 0;
       const dailyAttendance = dailyExpectedShifts ? (dailyPresentShifts / dailyExpectedShifts) * 100 : 0;
@@ -286,7 +302,7 @@ module.exports = (ctx) => {
     const finalAbsenceRate = expectedShiftCount ? (finalAbsenceCount / expectedShiftCount) * 100 : 0;
     const finalAttendanceRate = expectedShiftCount ? Math.max(0, Math.min(100, (shiftCount / expectedShiftCount) * 100)) : 0;
 
-    return res.json({
+    const payload = {
       summary: {
         totalHours,
         latenessRate: finalLatenessRate,
@@ -299,12 +315,21 @@ module.exports = (ctx) => {
         expectedHours: expectedMinutes / 60,
         absenceCount: finalAbsenceCount,
         absenceRate: finalAbsenceRate,
+        scopedUserCount: reportUsers.length,
         dailyWorked,
+        dailyAverageWorked,
+        dailyExpectedShiftSeries,
         dailyLatenessRate,
         dailyAttendanceRate,
         dailyAbsenceRate,
       },
-    });
+    };
+    reportCache.set(cacheKey, { ts: Date.now(), payload });
+    if (reportCache.size > 200) {
+      const oldestKey = reportCache.keys().next().value;
+      if (oldestKey) reportCache.delete(oldestKey);
+    }
+    return res.json(payload);
   });
 
   router.get("/reports/team", authRequired, async (req, res) => {

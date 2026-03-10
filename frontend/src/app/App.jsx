@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../services/api";
-import { startOfWeek } from "../utils/date";
 import { splitDisplayName } from "../utils/name";
 import { WORKING_DAYS } from "../constants/workDays";
 import { SparklineChart } from "../components/charts/SparklineChart";
@@ -83,6 +82,8 @@ export default function App() {
   const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
   const [createTeamLoading, setCreateTeamLoading] = useState(false);
   const [provisionLoading, setProvisionLoading] = useState(false);
+  const dashboardCacheRef = useRef(new Map());
+  const dashboardRequestRef = useRef(null);
 
   const roles = user?.roles || [];
   const isAdmin =
@@ -100,9 +101,11 @@ export default function App() {
   };
 
   const renderSparkline = (series, id, color = "#3b82f6", options = {}) => {
-    if (!Array.isArray(series) || series.length < 2) return null;
-    const normalized = series.map((v) => (typeof v === "number" ? v : v?.value ?? 0));
-    const labels = options.labels && options.labels.length === normalized.length ? options.labels : normalized.map((_, i) => `${i + 1}`);
+    if (!Array.isArray(series) || !series.length) return null;
+    const values = series.map((v) => (typeof v === "number" ? v : v?.value ?? 0));
+    const normalized = values.length === 1 ? [values[0], values[0]] : values;
+    const baseLabels = options.labels && options.labels.length === values.length ? options.labels : values.map((_, i) => `${i + 1}`);
+    const labels = normalized.length === baseLabels.length ? baseLabels : [baseLabels[0] || "1", baseLabels[0] || "1"];
     const min = Math.min(...normalized);
     const max = Math.max(...normalized);
     const range = Math.max(1e-6, max - min);
@@ -158,22 +161,22 @@ export default function App() {
     setReportLoading(true);
 
     const now = new Date();
-    let start = startOfWeek(now);
-    let end = new Date(start);
-    end.setDate(end.getDate() + 6);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let end = new Date(today);
+    let start = new Date(today);
+    start.setDate(start.getDate() - 6);
 
     if (period === "month") {
       start = new Date(now.getFullYear(), now.getMonth(), 1);
       end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     } else if (period === "year") {
-      start = new Date(now);
-      start.setFullYear(now.getFullYear() - 1);
+      // 12 mois glissants (mois courant inclus)
+      start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
       end = new Date(now);
     }
 
     const custom = rangeStart && rangeEnd;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const toYMD = (d) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const rawFrom = custom ? rangeStart : toYMD(start);
@@ -186,9 +189,23 @@ export default function App() {
       // Admin/manager dashboard must aggregate global data; employee stays scoped to self.
       if (user?.id && !isAdmin && !isManager) q.set("userId", user.id);
       if ((isAdmin || isManager) && reportService && reportService !== "ALL") q.set("service", reportService);
-      const data = await apiFetch(`/reports?${q.toString()}`);
+      const cacheKey = `${user.id}|${q.toString()}`;
+      const nowTs = Date.now();
+      const cached = dashboardCacheRef.current.get(cacheKey);
+      if (cached && nowTs - cached.ts < 15000) {
+        setReport(cached.data);
+        return;
+      }
+
+      if (dashboardRequestRef.current) dashboardRequestRef.current.abort();
+      const controller = new AbortController();
+      dashboardRequestRef.current = controller;
+      const data = await apiFetch(`/reports?${q.toString()}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setReport({ ...data.summary, from: rawFrom, to: safeTo });
+      dashboardCacheRef.current.set(cacheKey, { ts: nowTs, data: { ...data.summary, from: rawFrom, to: safeTo } });
     } catch (err) {
+      if (err?.name === "AbortError") return;
       setError(err.message);
     } finally {
       setReportLoading(false);
@@ -326,6 +343,7 @@ export default function App() {
       setResetLoading(true);
       setError("");
       await apiFetch("/admin/reset", { method: "POST" });
+      dashboardCacheRef.current.clear();
       await Promise.all([loadDashboard(), loadTeams(), loadUsers()]);
       setSuccessMessage("Données réinitialisées.");
     } catch (err) {
@@ -340,8 +358,9 @@ export default function App() {
     try {
       setSeedLoading(true);
       setError("");
-      // Génération rapide (démo): côté backend, /admin/seed est borné et accepte un param days.
-      await apiFetch("/admin/seed?days=30", { method: "POST" });
+      // Toujours générer sur 12 mois pour alimenter la vue annuelle.
+      await apiFetch("/admin/seed?days=365", { method: "POST" });
+      dashboardCacheRef.current.clear();
       await loadDashboard();
       setSuccessMessage("Pointages générés.");
     } catch (err) {
@@ -357,6 +376,7 @@ export default function App() {
       setSyncAdLoading(true);
       setError("");
       await apiFetch("/admin/sync-ad", { method: "POST" });
+      dashboardCacheRef.current.clear();
       await loadUsers();
       setSuccessMessage("Synchronisation AD terminée.");
     } catch (err) {
