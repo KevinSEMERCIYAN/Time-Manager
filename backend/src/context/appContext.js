@@ -21,6 +21,12 @@ const COOKIE_NAME = "tm_access";
 const REFRESH_COOKIE = "tm_refresh";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+const PLACEHOLDER_SECRETS = new Set([
+  "change-me",
+  "changeme",
+  "votre_mot_de_passe_ldap",
+  "your_ldap_password",
+]);
 
 const DEFAULT_SCHEDULE = {
   amStart: "09:00",
@@ -99,6 +105,7 @@ const authRequired = async (req, res, next) => {
       username: user.username,
       displayName: user.displayName,
       roles: user.roles || [],
+      department: user.department || null,
     };
     next();
   } catch (err) {
@@ -190,15 +197,12 @@ const canAccessUser = async (actor, userId) => {
   if (!target || target.isDeleted) return false;
   if (actor.id === userId) return true;
   if (!isManager(actor)) return false;
-  if (Array.isArray(target.roles) && target.roles.includes("EMPLOYEE") && target.isProvisioned) {
-    return true;
-  }
-  const managerTeamIds = await getManagerTeamIds(actor.id);
-  if (!managerTeamIds.length) return false;
-  const membership = await prisma.teamMember.findFirst({
-    where: { userId, teamId: { in: managerTeamIds } },
-  });
-  return !!membership;
+  // Règle métier: un manager ne peut accéder qu'aux EMPLOYEE de son pôle.
+  const rolesList = Array.isArray(target.roles) ? target.roles : [];
+  if (!rolesList.includes("EMPLOYEE") || !target.isProvisioned) return false;
+  const actorDept = actor.department || null;
+  if (!actorDept) return false;
+  return target.department === actorDept;
 };
 
 const canManageClockFor = async (actor, targetId) => {
@@ -210,12 +214,9 @@ const canManageClockFor = async (actor, targetId) => {
   if (!target.isProvisioned) return false;
   const rolesList = Array.isArray(target.roles) ? target.roles : [];
   if (!rolesList.includes("EMPLOYEE")) return false;
-  const managerTeamIds = await getManagerTeamIds(actor.id);
-  if (!managerTeamIds.length) return false;
-  const membership = await prisma.teamMember.findFirst({
-    where: { userId: targetId, teamId: { in: managerTeamIds } },
-  });
-  return !!membership;
+  const actorDept = actor.department || null;
+  if (!actorDept) return false;
+  return target.department === actorDept;
 };
 
 const isManagerOfTeam = async (actor, teamId) => {
@@ -226,41 +227,24 @@ const isManagerOfTeam = async (actor, teamId) => {
 };
 
 const listAccessibleUsers = async (actor) => {
-  const loadEmployees = async () => {
-    const all = await prisma.user.findMany({
-      where: { isDeleted: false },
-      orderBy: { displayName: "asc" },
-    });
-    return all.filter((u) => Array.isArray(u.roles) && u.roles.includes("EMPLOYEE"));
-  };
-
   if (isAdmin(actor)) {
     return prisma.user.findMany({ orderBy: { displayName: "asc" } });
   }
   if (isManager(actor)) {
-    const teamIds = await getManagerTeamIds(actor.id);
-    if (!teamIds.length) {
-      const employees = await loadEmployees();
-      const self = await prisma.user.findUnique({ where: { id: actor.id } });
-      if (self && !self.isDeleted) {
-        const exists = employees.find((u) => u.id === self.id);
-        if (!exists) employees.unshift(self);
-      }
-      return employees;
-    }
-    const members = await prisma.teamMember.findMany({
-      where: { teamId: { in: teamIds } },
-      include: { user: true },
-    });
-    let users = members.map((m) => m.user).filter((u) => u);
-    if (!users.length) {
-      users = await loadEmployees();
-    }
+    // Règle métier: un manager ne doit voir/gérer que les employés de SON pôle (OU/department).
     const self = await prisma.user.findUnique({ where: { id: actor.id } });
-    if (self) users.push(self);
-    const dedup = new Map();
-    for (const u of users) dedup.set(u.id, u);
-    return Array.from(dedup.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+    if (!self || self.isDeleted) return [];
+    const dept = self.department || actor.department || null;
+    if (!dept) return [];
+
+    const users = await prisma.user.findMany({
+      where: {
+        isDeleted: false,
+        department: dept,
+      },
+      orderBy: { displayName: "asc" },
+    });
+    return users.filter((u) => Array.isArray(u.roles) && u.roles.includes("EMPLOYEE"));
   }
   const self = await prisma.user.findUnique({ where: { id: actor.id } });
   return self && !self.isDeleted ? [self] : [];
@@ -272,7 +256,9 @@ const autoCloseOpenClocks = async (userIds) => {
     where: { userId: { in: userIds }, clockOutAt: null },
     include: { user: true },
   });
+  const isDevMode = process.env.DEV_AUTH === "true" || process.env.DEV_AUTH === "1";
   for (const clock of openClocks) {
+    if (isDevMode) continue; // en dev, ne pas auto-clore pour permettre clock-out manuel
     const dateKey = clock.date.toISOString().slice(0, 10);
     const sched = scheduleForUser(clock.user);
     const pmEnd = parseTimeOnDate(dateKey, sched.pmEnd);
@@ -339,6 +325,12 @@ const ldapSearchList = (client, base, options) =>
     });
   });
 
+const hasUsableLdapBindCredentials = (bindDn, bindPw) => {
+  if (!bindDn || !bindPw) return false;
+  const pw = String(bindPw).trim().toLowerCase();
+  return pw.length > 0 && !PLACEHOLDER_SECRETS.has(pw);
+};
+
 let adSyncRunning = false;
 const syncAdUsers = async () => {
   if (adSyncRunning) return { ok: true, skipped: true };
@@ -351,9 +343,13 @@ const syncAdUsers = async () => {
     process.env.LDAP_USERS_FILTER || "(&(objectClass=user)(!(objectClass=computer)))";
   const AD_DERIVE_TEAM = process.env.AD_DERIVE_TEAM === "true";
 
-  if (!BIND_DN || !BIND_PW) {
+  if (!hasUsableLdapBindCredentials(BIND_DN, BIND_PW)) {
     adSyncRunning = false;
-    throw new Error("LDAP bind credentials missing for AD sync");
+    return {
+      ok: false,
+      skipped: true,
+      reason: "LDAP bind credentials are missing or placeholder values",
+    };
   }
 
   const client = buildLdapClient();
@@ -367,6 +363,10 @@ const syncAdUsers = async () => {
     const users = await ldapSearchList(client, USERS_BASE_DN, {
       scope: "sub",
       filter: USERS_FILTER,
+      paged: {
+        pageSize: 500,
+        pagePause: false,
+      },
       attributes: [
         "dn",
         "sAMAccountName",
@@ -404,6 +404,7 @@ const syncAdUsers = async () => {
         adDn,
         email,
         phone,
+        department: getTeamFromDn(adDn),
         isActive,
       };
 
@@ -476,6 +477,10 @@ const syncAdUsers = async () => {
 
 const startAdSyncScheduler = () => {
   if (!AD_SYNC_ENABLED || AD_SYNC_INTERVAL_MINUTES <= 0) return;
+  if (!hasUsableLdapBindCredentials(process.env.LDAP_BIND_DN, process.env.LDAP_BIND_PASSWORD)) {
+    console.warn("AD sync disabled: configure LDAP_BIND_DN/LDAP_BIND_PASSWORD with valid values.");
+    return;
+  }
   const intervalMs = AD_SYNC_INTERVAL_MINUTES * 60 * 1000;
   setTimeout(() => {
     syncAdUsers().catch((err) => console.error("AD sync failed:", err?.message || err));

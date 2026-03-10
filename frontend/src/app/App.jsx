@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../services/api";
-import { startOfWeek } from "../utils/date";
 import { splitDisplayName } from "../utils/name";
 import { WORKING_DAYS } from "../constants/workDays";
 import { SparklineChart } from "../components/charts/SparklineChart";
@@ -9,6 +8,7 @@ import { ClockModal } from "../components/modals/ClockModal";
 import { ConfirmModal } from "../components/modals/ConfirmModal";
 import { EditTeamModal } from "../components/modals/EditTeamModal";
 import { ErrorToast } from "../components/feedback/ErrorToast";
+import { SuccessToast } from "../components/feedback/SuccessToast";
 import { ROUTES, isMemberDetailsRoute, isProtectedRoute } from "./config/routes";
 import { LandingPage } from "../pages/LandingPage";
 import { LoginPage } from "../pages/LoginPage";
@@ -19,6 +19,7 @@ import { MemberDetailsPage } from "../pages/MemberDetailsPage";
 import { TeamsPage } from "../pages/TeamsPage";
 import { CreateTeamPage } from "../pages/CreateTeamPage";
 import { ProfilePage } from "../pages/ProfilePage";
+import { MyClocksPage } from "../pages/MyClocksPage";
 
 export default function App() {
   const [route, setRoute] = useState(window.location.pathname || ROUTES.LANDING);
@@ -27,6 +28,7 @@ export default function App() {
   const [teams, setTeams] = useState([]);
   const [users, setUsers] = useState([]);
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -43,8 +45,17 @@ export default function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [teamReport, setTeamReport] = useState(null);
   const [userReport, setUserReport] = useState(null);
+  const [teamReportLoading, setTeamReportLoading] = useState(false);
+  const [userReportLoading, setUserReportLoading] = useState(false);
   const [reportTeamId, setReportTeamId] = useState("");
+  const [reportTeamText, setReportTeamText] = useState("");
   const [reportUserId, setReportUserId] = useState("");
+  const [reportUserText, setReportUserText] = useState("");
+  const [reportService, setReportService] = useState("ALL");
+  const [seedLoading, setSeedLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [syncAdLoading, setSyncAdLoading] = useState(false);
+  const [exportCsvLoading, setExportCsvLoading] = useState(false);
 
   const [teamToDelete, setTeamToDelete] = useState(null);
   const [teamToEdit, setTeamToEdit] = useState(null);
@@ -69,10 +80,18 @@ export default function App() {
   const [assignNow, setAssignNow] = useState(false);
   const [createTeamId, setCreateTeamId] = useState("");
   const [createDropdownOpen, setCreateDropdownOpen] = useState(false);
+  const [createTeamLoading, setCreateTeamLoading] = useState(false);
+  const [provisionLoading, setProvisionLoading] = useState(false);
+  const dashboardCacheRef = useRef(new Map());
+  const dashboardRequestRef = useRef(null);
 
   const roles = user?.roles || [];
-  const isAdmin = roles.includes("ADMIN");
-  const isManager = roles.includes("MANAGER");
+  const isAdmin =
+    roles.includes("ROLE_ADMIN") ||
+    roles.includes("ADMIN");
+  const isManager =
+    roles.includes("ROLE_MANAGER") ||
+    roles.includes("MANAGER");
 
   const navigate = (path) => {
     if (window.location.pathname !== path) {
@@ -82,9 +101,11 @@ export default function App() {
   };
 
   const renderSparkline = (series, id, color = "#3b82f6", options = {}) => {
-    if (!Array.isArray(series) || series.length < 2) return null;
-    const normalized = series.map((v) => (typeof v === "number" ? v : v?.value ?? 0));
-    const labels = options.labels && options.labels.length === normalized.length ? options.labels : normalized.map((_, i) => `${i + 1}`);
+    if (!Array.isArray(series) || !series.length) return null;
+    const values = series.map((v) => (typeof v === "number" ? v : v?.value ?? 0));
+    const normalized = values.length === 1 ? [values[0], values[0]] : values;
+    const baseLabels = options.labels && options.labels.length === values.length ? options.labels : values.map((_, i) => `${i + 1}`);
+    const labels = normalized.length === baseLabels.length ? baseLabels : [baseLabels[0] || "1", baseLabels[0] || "1"];
     const min = Math.min(...normalized);
     const max = Math.max(...normalized);
     const range = Math.max(1e-6, max - min);
@@ -140,54 +161,84 @@ export default function App() {
     setReportLoading(true);
 
     const now = new Date();
-    let start = startOfWeek(now);
-    let end = new Date(start);
-    end.setDate(end.getDate() + 6);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let end = new Date(today);
+    let start = new Date(today);
+    start.setDate(start.getDate() - 6);
 
     if (period === "month") {
       start = new Date(now.getFullYear(), now.getMonth(), 1);
       end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     } else if (period === "year") {
-      start = new Date(now);
-      start.setFullYear(now.getFullYear() - 1);
+      // 12 mois glissants (mois courant inclus)
+      start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
       end = new Date(now);
     }
 
     const custom = rangeStart && rangeEnd;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const rawFrom = custom ? rangeStart : start.toISOString().slice(0, 10);
-    const rawTo = custom ? rangeEnd : end.toISOString().slice(0, 10);
+    const toYMD = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const rawFrom = custom ? rangeStart : toYMD(start);
+    const rawTo = custom ? rangeEnd : toYMD(end);
     const toDate = new Date(`${rawTo}T00:00:00`);
     const safeTo = toDate > today ? today.toISOString().slice(0, 10) : rawTo;
 
     try {
-      const data = await apiFetch(`/reports?from=${rawFrom}&to=${safeTo}`);
+      const q = new URLSearchParams({ from: rawFrom, to: safeTo });
+      // Admin/manager dashboard must aggregate global data; employee stays scoped to self.
+      if (user?.id && !isAdmin && !isManager) q.set("userId", user.id);
+      if ((isAdmin || isManager) && reportService && reportService !== "ALL") q.set("service", reportService);
+      const cacheKey = `${user.id}|${q.toString()}`;
+      const nowTs = Date.now();
+      const cached = dashboardCacheRef.current.get(cacheKey);
+      if (cached && nowTs - cached.ts < 15000) {
+        setReport(cached.data);
+        return;
+      }
+
+      if (dashboardRequestRef.current) dashboardRequestRef.current.abort();
+      const controller = new AbortController();
+      dashboardRequestRef.current = controller;
+      const data = await apiFetch(`/reports?${q.toString()}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setReport({ ...data.summary, from: rawFrom, to: safeTo });
+      dashboardCacheRef.current.set(cacheKey, { ts: nowTs, data: { ...data.summary, from: rawFrom, to: safeTo } });
     } catch (err) {
+      if (err?.name === "AbortError") return;
       setError(err.message);
     } finally {
       setReportLoading(false);
     }
   };
 
-  const loadTeamReport = async () => {
-    if (!reportTeamId || !report?.from || !report?.to) return;
+  const loadTeamReport = async (teamIdOverride) => {
+    const targetTeamId = teamIdOverride || reportTeamId;
+    if (!targetTeamId || !report?.from || !report?.to) return;
     try {
-      const data = await apiFetch(`/reports/team?from=${report.from}&to=${report.to}&teamId=${reportTeamId}`);
+      setTeamReportLoading(true);
+      setError("");
+      const data = await apiFetch(`/reports/team?from=${report.from}&to=${report.to}&teamId=${targetTeamId}`);
       setTeamReport(data);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setTeamReportLoading(false);
     }
   };
 
-  const loadUserReport = async () => {
-    if (!reportUserId || !report?.from || !report?.to) return;
+  const loadUserReport = async (userIdOverride) => {
+    const targetUserId = userIdOverride || reportUserId;
+    if (!targetUserId || !report?.from || !report?.to) return;
     try {
-      const data = await apiFetch(`/reports/user?from=${report.from}&to=${report.to}&userId=${reportUserId}`);
+      setUserReportLoading(true);
+      setError("");
+      const data = await apiFetch(`/reports/user?from=${report.from}&to=${report.to}&userId=${targetUserId}`);
       setUserReport(data);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setUserReportLoading(false);
     }
   };
 
@@ -261,7 +312,10 @@ export default function App() {
   };
 
   const exportCsv = async () => {
+    if (exportCsvLoading) return;
     try {
+      setExportCsvLoading(true);
+      setError("");
       const from = report?.from;
       const to = report?.to;
       const query = from && to ? `?from=${from}&to=${to}` : "";
@@ -275,35 +329,60 @@ export default function App() {
       a.download = "timemanager-export.csv";
       a.click();
       URL.revokeObjectURL(url);
+      setSuccessMessage("Export CSV téléchargé.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setExportCsvLoading(false);
     }
   };
 
   const resetData = async () => {
+    if (resetLoading) return;
     try {
+      setResetLoading(true);
+      setError("");
       await apiFetch("/admin/reset", { method: "POST" });
+      dashboardCacheRef.current.clear();
       await Promise.all([loadDashboard(), loadTeams(), loadUsers()]);
+      setSuccessMessage("Données réinitialisées.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setResetLoading(false);
     }
   };
 
   const seedData = async () => {
+    if (seedLoading) return;
     try {
-      await apiFetch("/admin/seed", { method: "POST" });
+      setSeedLoading(true);
+      setError("");
+      // Toujours générer sur 12 mois pour alimenter la vue annuelle.
+      await apiFetch("/admin/seed?days=365", { method: "POST" });
+      dashboardCacheRef.current.clear();
       await loadDashboard();
+      setSuccessMessage("Pointages générés.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSeedLoading(false);
     }
   };
 
   const syncAdUsers = async () => {
+    if (syncAdLoading) return;
     try {
+      setSyncAdLoading(true);
+      setError("");
       await apiFetch("/admin/sync-ad", { method: "POST" });
+      dashboardCacheRef.current.clear();
       await loadUsers();
+      setSuccessMessage("Synchronisation AD terminée.");
     } catch (err) {
       setError(err.message);
+    } finally {
+      setSyncAdLoading(false);
     }
   };
 
@@ -317,6 +396,13 @@ export default function App() {
       await apiFetch(`/users/${targetUser.id}`, {
         method: "PUT",
         body: JSON.stringify({
+          displayName: targetUser.displayName || undefined,
+          firstName: targetUser.firstName || undefined,
+          lastName: targetUser.lastName || undefined,
+          email: targetUser.email || null,
+          phone: targetUser.phone || null,
+          department: typeof targetUser.department === "string" ? targetUser.department : null,
+          roles: Array.isArray(targetUser.roles) ? targetUser.roles : undefined,
           contractType: targetUser.contractType || null,
           workingDays,
           schedule: {
@@ -328,6 +414,8 @@ export default function App() {
         }),
       });
       await loadUsers();
+      setError("");
+      setSuccessMessage("Utilisateur enregistré.");
       navigate(ROUTES.MEMBERS);
     } catch (err) {
       setError(err.message);
@@ -335,9 +423,38 @@ export default function App() {
     }
   };
 
-  const provisionUser = async () => {
-    if (!createUserId) return;
+  const createUserManual = async (payload) => {
     try {
+      setError("");
+      const body = {
+        username: payload?.username,
+        displayName: payload?.displayName,
+        firstName: payload?.firstName || null,
+        lastName: payload?.lastName || null,
+        email: payload?.email || null,
+        phone: payload?.phone || null,
+        department: payload?.department || null,
+        roles: Array.isArray(payload?.roles) ? payload.roles : undefined,
+        contractType: payload?.contractType || null,
+        schedule: payload?.schedule || null,
+        isActive: payload?.isActive !== false,
+        isProvisioned: payload?.isProvisioned === true,
+      };
+      const data = await apiFetch("/users", { method: "POST", body: JSON.stringify(body) });
+      await loadUsers();
+      setSuccessMessage("Utilisateur créé.");
+      return data.user;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  };
+
+  const provisionUser = async () => {
+    if (!createUserId || provisionLoading) return;
+    try {
+      setProvisionLoading(true);
+      setError("");
       const selected = users.find((u) => u.id === createUserId);
       await apiFetch(`/users/${createUserId}/provision`, {
         method: "POST",
@@ -364,8 +481,47 @@ export default function App() {
       setCreateSchedule({ amStart: "", amEnd: "", pmStart: "", pmEnd: "" });
       setAssignNow(false);
       setCreateTeamId("");
+      setError("");
+      setSuccessMessage("Utilisateur créé.");
       await loadUsers();
       navigate(ROUTES.MEMBERS);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProvisionLoading(false);
+    }
+  };
+
+  const impersonateUser = async (targetUserId) => {
+    if (!targetUserId) return;
+    try {
+      setError("");
+      const data = await apiFetch(`/admin/impersonate/${targetUserId}`, { method: "POST" });
+      setUser(data.user);
+      setSuccessMessage("Session changée.");
+      navigate(ROUTES.DASHBOARD);
+      window.location.reload();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // DEV_MODE: bascule directe vers les comptes de test (admin / manager / employee)
+  const devLoginAs = async (username) => {
+    const passwords = {
+      admin: "admin123",
+      manager: "manager123",
+      employee: "employee123",
+    };
+    const password = passwords[username];
+    if (!password) return;
+    try {
+      setError("");
+      await apiFetch("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      });
+      window.location.reload();
     } catch (err) {
       setError(err.message);
     }
@@ -402,6 +558,8 @@ export default function App() {
         }),
       });
       setTeamToEdit(null);
+      setError("");
+      setSuccessMessage("Équipe mise à jour.");
       await loadTeams();
     } catch (err) {
       setError(err.message);
@@ -421,6 +579,8 @@ export default function App() {
   const createTeam = async () => {
     const name = newTeamName.trim();
     if (!name) return;
+    setCreateTeamLoading(true);
+    setError("");
     try {
       await apiFetch("/teams", {
         method: "POST",
@@ -435,10 +595,14 @@ export default function App() {
       setNewTeamDescription("");
       setSelectedMembers([]);
       setSelectedManagerId("");
+      setError("");
+      setSuccessMessage("Équipe créée.");
       navigate(ROUTES.TEAMS);
       await loadTeams();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setCreateTeamLoading(false);
     }
   };
 
@@ -485,7 +649,13 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     loadDashboard();
-  }, [user, period, rangeStart, rangeEnd]);
+  }, [user, period, rangeStart, rangeEnd, reportService]);
+
+  useEffect(() => {
+    if (!user || !isManager || isAdmin) return;
+    const dept = user.department || "ALL";
+    setReportService(dept);
+  }, [user, isManager, isAdmin]);
 
   useEffect(() => {
     if (!user) return;
@@ -503,6 +673,8 @@ export default function App() {
     isManager,
     error,
     setError,
+    successMessage,
+    setSuccessMessage,
     loading,
     username,
     setUsername,
@@ -525,10 +697,18 @@ export default function App() {
     setUsers,
     reportTeamId,
     setReportTeamId,
+    reportTeamText,
+    setReportTeamText,
     reportUserId,
     setReportUserId,
+    reportUserText,
+    setReportUserText,
+    reportService,
+    setReportService,
     loadTeamReport,
     loadUserReport,
+    teamReportLoading,
+    userReportLoading,
     teamReport,
     userReport,
     renderSparkline,
@@ -536,7 +716,11 @@ export default function App() {
     exportCsv,
     resetData,
     seedData,
+    seedLoading,
+    resetLoading,
+    syncAdLoading,
     syncAdUsers,
+    exportCsvLoading,
     createSearch,
     setCreateSearch,
     createUserId,
@@ -556,7 +740,11 @@ export default function App() {
     createDropdownOpen,
     setCreateDropdownOpen,
     provisionUser,
+    provisionLoading,
+    impersonateUser,
+    devLoginAs,
     saveUser,
+    createUserManual,
     setUserToDelete,
     newTeamName,
     setNewTeamName,
@@ -571,6 +759,7 @@ export default function App() {
     managerDropdownOpen,
     setManagerDropdownOpen,
     createTeam,
+    createTeamLoading,
     openEditTeam,
     setTeamToDelete,
     apiFetch,
@@ -584,10 +773,10 @@ export default function App() {
 
   let content = <LandingPage ctx={appCtx} />;
 
-  if (route === ROUTES.SIGN_IN) {
-    content = <LoginPage ctx={appCtx} />;
-  } else if (route === ROUTES.DASHBOARD) {
+  if (route === ROUTES.DASHBOARD) {
     content = withShell(<DashboardPage ctx={appCtx} />, { showFilters: true, showUserPanel: true });
+  } else if (route === ROUTES.MY_CLOCKS) {
+    content = withShell(<MyClocksPage ctx={appCtx} />, { showFilters: false, showUserPanel: true });
   } else if (route === ROUTES.PROFILE) {
     content = withShell(<ProfilePage ctx={appCtx} />);
   } else if (route === ROUTES.MEMBERS) {
@@ -602,25 +791,25 @@ export default function App() {
     content = withShell(<CreateTeamPage ctx={appCtx} />);
   }
 
-  const isWideLayout = route === ROUTES.SIGN_IN || route === ROUTES.LANDING;
+  // Pour la page de connexion / landing, on affiche le layout plein écran
+  // sans le wrapper "tm-app-charter" afin d'utiliser le visuel moderne.
+  if (route === ROUTES.SIGN_IN || route === ROUTES.LANDING) {
+    return <LoginPage ctx={appCtx} />;
+  }
+
+  const isWideLayout = false;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f4f6fb", padding: 24, fontFamily: "Arial, sans-serif" }}>
+    <div className="tm-app-charter">
       <div
+        className="tm-card"
         style={{
-          maxWidth: isWideLayout ? 620 : 1100,
-          margin: isWideLayout ? "80px auto" : "40px auto",
-          background: "white",
-          borderRadius: 12,
-          padding: isWideLayout ? "28px 36px" : 28,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+          maxWidth: isWideLayout ? 620 : "min(1780px, 100% - 24px)",
+          margin: isWideLayout ? "80px auto" : "14px auto",
+          padding: isWideLayout ? "28px 36px" : 34,
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 24 }}>TimeManager</h1>
-        <p style={{ marginTop: 6, color: "#6b7280" }}>
-          {route === ROUTES.SIGN_IN || route === ROUTES.LANDING ? "Connexion via Windows Server (LDAPS)" : "Tableau de bord"}
-        </p>
-        {authLoading ? <div style={{ fontSize: 13, color: "#6b7280" }}>Chargement...</div> : content}
+        {authLoading ? <div className="tm-text-muted" style={{ fontSize: 13 }}>Chargement...</div> : content}
       </div>
 
       <ClockModal
@@ -665,6 +854,7 @@ export default function App() {
       />
 
       <ErrorToast error={error} />
+      <SuccessToast message={successMessage} onDismiss={() => setSuccessMessage("")} />
     </div>
   );
 }

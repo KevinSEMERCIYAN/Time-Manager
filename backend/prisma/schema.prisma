@@ -26,6 +26,7 @@ model User {
   lastName         String?
   email            String?
   phone            String?
+  department       String?
   roles            Json
   contractType     ContractType?
   scheduleAmStart  String?
@@ -51,6 +52,7 @@ model Team {
   id            String       @id @default(uuid())
   name          String       @unique
   description   String?
+  department    String?
   managerUserId String?
   manager       User?        @relation("TeamManager", fields: [managerUserId], references: [id])
   members       TeamMember[]
