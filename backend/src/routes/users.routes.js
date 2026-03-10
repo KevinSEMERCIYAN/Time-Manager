@@ -145,6 +145,9 @@ module.exports = (ctx) => {
 
   router.post("/users", authRequired, async (req, res) => {
     if (!isAdmin(req.user) && !isManager(req.user)) return res.status(403).json({ error: "Forbidden" });
+    return res.status(403).json({ error: "Manual user creation is disabled" });
+
+    // Legacy path kept below for reference only (disabled).
     const {
       username,
       displayName,
@@ -181,9 +184,13 @@ module.exports = (ctx) => {
     } else if (isAdmin(req.user)) {
       // Admin: peut choisir rôles + department.
       if (Array.isArray(roles) && roles.length) {
+        const requestedRoles = roles.map((r) => String(r || "").trim().toUpperCase()).filter(Boolean);
+        if (requestedRoles.includes("ADMIN")) {
+          return res.status(400).json({ error: "Admin creation is disabled from application" });
+        }
         finalRoles = roles
           .map((r) => String(r || "").trim().toUpperCase())
-          .filter(Boolean);
+          .filter((r) => ["EMPLOYEE", "MANAGER"].includes(r));
       }
       // Garde-fou: si aucun rôle fourni, on force EMPLOYEE.
       if (!finalRoles.length) finalRoles = ["EMPLOYEE"];
