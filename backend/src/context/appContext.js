@@ -228,7 +228,10 @@ const isManagerOfTeam = async (actor, teamId) => {
 
 const listAccessibleUsers = async (actor) => {
   if (isAdmin(actor)) {
-    return prisma.user.findMany({ orderBy: { displayName: "asc" } });
+    return prisma.user.findMany({
+      where: { isDeleted: false },
+      orderBy: { displayName: "asc" },
+    });
   }
   if (isManager(actor)) {
     // Règle métier: un manager ne doit voir/gérer que les employés de SON pôle (OU/department).
@@ -360,6 +363,18 @@ const syncAdUsers = async () => {
 
   try {
     await ldapBind(client, BIND_DN, BIND_PW);
+    const pickAttr = (entry, ...keys) => {
+      for (const key of keys) {
+        const candidates = [key, String(key).toLowerCase(), String(key).toUpperCase()];
+        for (const k of candidates) {
+          const raw = entry?.[k];
+          const value = Array.isArray(raw) ? raw[0] : raw;
+          if (typeof value === "string" && value.trim()) return value.trim();
+        }
+      }
+      return null;
+    };
+
     const users = await ldapSearchList(client, USERS_BASE_DN, {
       scope: "sub",
       filter: USERS_FILTER,
@@ -371,8 +386,13 @@ const syncAdUsers = async () => {
         "dn",
         "sAMAccountName",
         "displayName",
+        "givenName",
+        "sn",
+        "cn",
+        "name",
         "mail",
         "telephoneNumber",
+        "mobile",
         "memberOf",
         "userAccountControl",
       ],
@@ -386,12 +406,20 @@ const syncAdUsers = async () => {
       if (AD_SYNC_EXCLUDE_USERS.includes(username)) continue;
       scanned += 1;
       seenUsernames.add(username);
-      const displayName = u.displayName || username;
-      const { firstName, lastName } = splitDisplayName(displayName);
+      const adDisplayName = pickAttr(u, "displayName", "cn", "name");
+      const adFirstName = pickAttr(u, "givenName");
+      const adLastName = pickAttr(u, "sn", "surname");
+      const displayName =
+        adDisplayName ||
+        [adFirstName, adLastName].filter(Boolean).join(" ") ||
+        username;
+      const split = splitDisplayName(displayName);
+      const firstName = adFirstName || split.firstName;
+      const lastName = adLastName || split.lastName;
       const roles = getUserRolesFromAD(u.memberOf);
       const adDn = typeof u.dn === "string" ? u.dn : null;
-      const email = u.mail || null;
-      const phone = u.telephoneNumber || null;
+      const email = pickAttr(u, "mail", "userPrincipalName");
+      const phone = pickAttr(u, "telephoneNumber", "mobile");
       const uac = parseInt(u.userAccountControl || "0", 10);
       const isActive = (uac & 2) === 0;
 
@@ -455,7 +483,7 @@ const syncAdUsers = async () => {
       if (!seenUsernames.has(u.username)) {
         await prisma.user.update({
           where: { id: u.id },
-          data: { isActive: false },
+          data: { isActive: false, isDeleted: true },
         });
         deactivated += 1;
       }

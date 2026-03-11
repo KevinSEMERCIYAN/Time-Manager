@@ -28,7 +28,10 @@ export function MemberCreatePage({ ctx }) {
     provisionLoading,
   } = ctx;
 
-  const candidates = users.filter((u) => u.isActive !== false || u.isDeleted).filter((u) => !u.isProvisioned || u.isDeleted);
+  const candidates = users
+    .filter((u) => !u.isDeleted)
+    .filter((u) => u.isActive !== false)
+    .filter((u) => !u.isProvisioned);
   const filtered = candidates.filter((u) => `${u.displayName || ""} ${u.username || ""}`.toLowerCase().includes(createSearch.toLowerCase()));
   const roleLabel = (user) => {
     const roles = Array.isArray(user?.roles) ? user.roles : [];
