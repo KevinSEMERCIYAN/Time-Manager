@@ -3,7 +3,28 @@ const express = require("express");
 module.exports = (ctx) => {
   const router = express.Router();
   const reportCache = new Map();
-  const REPORT_CACHE_TTL_MS = parseInt(process.env.REPORT_CACHE_TTL_MS || "20000", 10);
+  ctx.clearReportCache = () => reportCache.clear();
+  const REPORT_CACHE_TTL_MS = parseInt(process.env.REPORT_CACHE_TTL_MS || "60000", 10);
+  const emptySummary = () => ({
+    totalHours: 0,
+    latenessRate: 0,
+    attendanceRate: 0,
+    averageHours: 0,
+    shiftCount: 0,
+    expectedShiftCount: 0,
+    lateCount: 0,
+    workedHours: 0,
+    expectedHours: 0,
+    absenceCount: 0,
+    absenceRate: 0,
+    scopedUserCount: 0,
+    dailyWorked: [],
+    dailyAverageWorked: [],
+    dailyExpectedShiftSeries: [],
+    dailyLatenessRate: [],
+    dailyAttendanceRate: [],
+    dailyAbsenceRate: [],
+  });
   const {
     prisma,
     authRequired,
@@ -49,8 +70,35 @@ module.exports = (ctx) => {
       const members = await prisma.teamMember.findMany({ where: { teamId } });
       userIds = members.map((m) => m.userId);
     } else {
-      const users = await listAccessibleUsers(req.user);
-      userIds = users.map((u) => u.id);
+      if (isAdmin(req.user)) {
+        // Dashboard admin: tous les EMPLOYEE + MANAGER uniquement.
+        const users = await prisma.user.findMany({
+          where: {
+            isDeleted: false,
+            isActive: true,
+            isProvisioned: true,
+            teams: { some: {} },
+            OR: [
+              { roles: { path: "$", array_contains: "EMPLOYEE" } },
+              { roles: { path: "$", array_contains: "MANAGER" } },
+            ],
+          },
+          select: { id: true },
+        });
+        userIds = users.map((u) => u.id);
+      } else if (isManager(req.user)) {
+        // Dashboard manager: uniquement les EMPLOYEE des équipes managées.
+        const memberships = await prisma.teamMember.findMany({
+          where: {
+            team: { managerUserId: req.user.id },
+          },
+          select: { userId: true },
+        });
+        userIds = [...new Set(memberships.map((m) => m.userId))];
+      } else {
+        const users = await listAccessibleUsers(req.user);
+        userIds = users.map((u) => u.id);
+      }
     }
 
     if (userId || teamId) {
@@ -62,36 +110,28 @@ module.exports = (ctx) => {
       isDeleted: false,
       isActive: true,
     };
+    if (!userId && !teamId) {
+      if (isAdmin(req.user)) {
+        whereUsers.isProvisioned = true;
+        whereUsers.teams = { some: {} };
+        whereUsers.OR = [
+          { roles: { path: "$", array_contains: "EMPLOYEE" } },
+          { roles: { path: "$", array_contains: "MANAGER" } },
+        ];
+      } else if (isManager(req.user)) {
+        whereUsers.isProvisioned = true;
+        whereUsers.roles = { path: "$", array_contains: "EMPLOYEE" };
+      }
+    }
     if (service) {
       if (isAdmin(req.user)) {
         whereUsers.department = service;
       } else if (isManager(req.user)) {
         const managerService = req.user.department || null;
-        if (!managerService || managerService !== service) {
-          return res.json({
-            summary: {
-              totalHours: 0,
-              latenessRate: 0,
-              attendanceRate: 0,
-              averageHours: 0,
-              shiftCount: 0,
-              expectedShiftCount: 0,
-              lateCount: 0,
-              workedHours: 0,
-              expectedHours: 0,
-              absenceCount: 0,
-              absenceRate: 0,
-              scopedUserCount: 0,
-              dailyWorked: [],
-              dailyAverageWorked: [],
-              dailyExpectedShiftSeries: [],
-              dailyLatenessRate: [],
-              dailyAttendanceRate: [],
-              dailyAbsenceRate: [],
-            },
-          });
+        if (managerService && managerService !== service) {
+          return res.json({ summary: emptySummary() });
         }
-        whereUsers.department = managerService;
+        whereUsers.department = service;
       } else if (req.user.id !== userId) {
         return res.status(403).json({ error: "Forbidden" });
       }
@@ -101,116 +141,58 @@ module.exports = (ctx) => {
       where: {
         ...whereUsers,
       },
+      select: {
+        id: true,
+        roles: true,
+        contractType: true,
+        scheduleAmStart: true,
+        scheduleAmEnd: true,
+        schedulePmStart: true,
+        schedulePmEnd: true,
+        workingDays: true,
+        graceMinutes: true,
+      },
     });
     const effectiveUserIds = users.map((u) => u.id);
     if (!effectiveUserIds.length) {
-      return res.json({
-        summary: {
-          totalHours: 0,
-          latenessRate: 0,
-          attendanceRate: 0,
-          averageHours: 0,
-          shiftCount: 0,
-          expectedShiftCount: 0,
-          lateCount: 0,
-          workedHours: 0,
-          expectedHours: 0,
-          absenceCount: 0,
-          absenceRate: 0,
-          scopedUserCount: 0,
-          dailyWorked: [],
-          dailyAverageWorked: [],
-          dailyExpectedShiftSeries: [],
-          dailyLatenessRate: [],
-          dailyAttendanceRate: [],
-          dailyAbsenceRate: [],
-        },
-      });
+      return res.json({ summary: emptySummary() });
     }
 
     const dateStart = new Date(`${from}T00:00:00.000Z`);
     const dateEnd = new Date(`${to}T00:00:00.000Z`);
+    const daySpan = Math.max(1, Math.floor((dateEnd.getTime() - dateStart.getTime()) / 86400000) + 1);
+    const canUseJoinAggregation =
+      !userId && !teamId && isAdmin(req.user) && daySpan <= 62;
+    let dailyAggRows = [];
 
-    const [activeUserRows, dailyRows, dailyLateRows] = await Promise.all([
-      prisma.clock.groupBy({
-        by: ["userId"],
-        where: {
-          userId: { in: effectiveUserIds },
-          date: { gte: dateStart, lte: dateEnd },
-        },
-      }),
-      prisma.clock.groupBy({
-        by: ["date"],
-        where: {
-          userId: { in: effectiveUserIds },
-          date: { gte: dateStart, lte: dateEnd },
-        },
-        _sum: { workedMinutes: true },
-        _count: { _all: true },
-        orderBy: { date: "asc" },
-      }),
-      prisma.$queryRawUnsafe(
-        "SELECT DATE(`date`) AS day, SUM(CASE WHEN `lateMinutes` > 0 THEN 1 ELSE 0 END) AS lateCount FROM `Clock` WHERE `userId` IN (" +
-          effectiveUserIds.map(() => "?").join(",") +
-          ") AND `date` >= ? AND `date` <= ? GROUP BY DATE(`date`)",
-        ...effectiveUserIds,
-        dateStart,
-        dateEnd
-      ),
-    ]);
+    if (canUseJoinAggregation) {
+      let whereSql = "c.`date` >= ? AND c.`date` <= ? AND u.`isDeleted` = false AND u.`isActive` = true";
+      const sqlParams = [dateStart, dateEnd];
 
-    if (!dailyRows.length) {
-      return res.json({
-        summary: {
-          totalHours: 0,
-          latenessRate: 0,
-          attendanceRate: 0,
-          averageHours: 0,
-          shiftCount: 0,
-          expectedShiftCount: 0,
-          lateCount: 0,
-          workedHours: 0,
-          expectedHours: 0,
-          absenceCount: 0,
-          absenceRate: 0,
-          scopedUserCount: 0,
-          dailyWorked: [],
-          dailyAverageWorked: [],
-          dailyExpectedShiftSeries: [],
-          dailyLatenessRate: [],
-          dailyAttendanceRate: [],
-          dailyAbsenceRate: [],
-        },
-      });
+      if (isAdmin(req.user) && service) {
+        whereSql += " AND u.`department` = ?";
+        sqlParams.push(service);
+      }
+      whereSql += " AND u.`isProvisioned` = true AND (JSON_CONTAINS(u.`roles`, '\"EMPLOYEE\"') OR JSON_CONTAINS(u.`roles`, '\"MANAGER\"'))";
+
+      const dailySql = `SELECT DATE(c.\`date\`) AS day, SUM(c.\`workedMinutes\`) AS workedMinutes, COUNT(*) AS shiftCount, SUM(CASE WHEN c.\`lateMinutes\` > 0 THEN 1 ELSE 0 END) AS lateCount FROM \`Clock\` c INNER JOIN \`User\` u ON u.\`id\` = c.\`userId\` WHERE ${whereSql} GROUP BY DATE(c.\`date\`) ORDER BY DATE(c.\`date\`) ASC`;
+      dailyAggRows = await prisma.$queryRawUnsafe(dailySql, ...sqlParams);
+    } else {
+      const inClause = effectiveUserIds.map(() => "?").join(",");
+      const dailySql = `SELECT DATE(\`date\`) AS day, SUM(\`workedMinutes\`) AS workedMinutes, COUNT(*) AS shiftCount, SUM(CASE WHEN \`lateMinutes\` > 0 THEN 1 ELSE 0 END) AS lateCount FROM \`Clock\` WHERE \`userId\` IN (${inClause}) AND \`date\` >= ? AND \`date\` <= ? GROUP BY DATE(\`date\`) ORDER BY DATE(\`date\`) ASC`;
+      const sqlParams = [...effectiveUserIds, dateStart, dateEnd];
+      dailyAggRows = await prisma.$queryRawUnsafe(dailySql, ...sqlParams);
     }
 
-    // Vue globale/équipe: base KPI sur les utilisateurs réellement actifs dans la période.
-    // Vue utilisateur (userId): conserver l'utilisateur demandé même sans activité.
-    const activeUserIdSet = new Set(activeUserRows.map((r) => r.userId));
-    const reportUsers = userId ? users : users.filter((u) => activeUserIdSet.has(u.id));
+    if (!dailyAggRows.length) {
+      return res.json({ summary: emptySummary() });
+    }
+
+    // KPI: inclure tous les utilisateurs du scope (admin/manager/team), même sans activité,
+    // pour refléter l'ensemble des utilisateurs rattachés aux équipes.
+    const reportUsers = users;
     if (!reportUsers.length) {
-      return res.json({
-        summary: {
-          totalHours: 0,
-          latenessRate: 0,
-          attendanceRate: 0,
-          averageHours: 0,
-          shiftCount: 0,
-          expectedShiftCount: 0,
-          lateCount: 0,
-          workedHours: 0,
-          expectedHours: 0,
-          absenceCount: 0,
-          absenceRate: 0,
-          scopedUserCount: 0,
-          dailyWorked: [],
-          dailyAverageWorked: [],
-          dailyExpectedShiftSeries: [],
-          dailyLatenessRate: [],
-          dailyAttendanceRate: [],
-          dailyAbsenceRate: [],
-        },
-      });
+      return res.json({ summary: emptySummary() });
     }
 
     let expectedShiftCount = 0;
@@ -221,19 +203,16 @@ module.exports = (ctx) => {
     const dailyShiftCount = new Map();
     const dailyLateCount = new Map();
 
-    for (const row of dailyRows) {
-      const dayKey = new Date(row.date).toISOString().slice(0, 10);
-      const worked = Number(row._sum?.workedMinutes || 0);
-      const shifts = Number(row._count?._all || 0);
+    for (const row of dailyAggRows) {
+      const dayKey = new Date(row.day).toISOString().slice(0, 10);
+      const worked = Number(row.workedMinutes || 0);
+      const shifts = Number(row.shiftCount || 0);
+      const lates = Number(row.lateCount || 0);
       workedMinutesTotal += worked;
       shiftCount += shifts;
+      lateCount += lates;
       workedByDay.set(dayKey, worked);
       dailyShiftCount.set(dayKey, shifts);
-    }
-    for (const row of dailyLateRows || []) {
-      const dayKey = new Date(row.day).toISOString().slice(0, 10);
-      const lates = Number(row.lateCount || 0);
-      lateCount += lates;
       dailyLateCount.set(dayKey, lates);
     }
 
@@ -262,7 +241,6 @@ module.exports = (ctx) => {
       };
     });
     const totalHours = workedMinutesTotal / 60;
-    const averageHours = reportUsers.length ? totalHours / reportUsers.length : 0;
 
     const dailyWorked = [];
     const dailyAverageWorked = [];
@@ -287,7 +265,7 @@ module.exports = (ctx) => {
       expectedShiftCount += dailyExpectedShifts;
 
       dailyWorked.push({ date: key, hours: worked / 60 });
-      dailyAverageWorked.push({ date: key, hours: reportUsers.length ? worked / 60 / reportUsers.length : 0 });
+      dailyAverageWorked.push({ date: key, hours: users.length ? worked / 60 / users.length : 0 });
       dailyExpectedShiftSeries.push({ date: key, value: dailyExpectedShifts });
       dailyLatenessRate.push({ date: key, value: dailyExpectedShifts ? (late / dailyExpectedShifts) * 100 : 0 });
       const dailyPresentShifts = dailyShiftCount.get(key) || 0;
@@ -301,6 +279,10 @@ module.exports = (ctx) => {
     const finalAbsenceCount = Math.max(0, expectedShiftCount - shiftCount);
     const finalAbsenceRate = expectedShiftCount ? (finalAbsenceCount / expectedShiftCount) * 100 : 0;
     const finalAttendanceRate = expectedShiftCount ? Math.max(0, Math.min(100, (shiftCount / expectedShiftCount) * 100)) : 0;
+    // KPI demandé: moyenne d'heures travaillées par utilisateur sur la période.
+    // - Manager: employés de ses équipes
+    // - Admin: employés + managers
+    const averageHours = users.length ? totalHours / users.length : 0;
 
     const payload = {
       summary: {
@@ -315,7 +297,7 @@ module.exports = (ctx) => {
         expectedHours: expectedMinutes / 60,
         absenceCount: finalAbsenceCount,
         absenceRate: finalAbsenceRate,
-        scopedUserCount: reportUsers.length,
+        scopedUserCount: users.length,
         dailyWorked,
         dailyAverageWorked,
         dailyExpectedShiftSeries,
@@ -366,18 +348,49 @@ module.exports = (ctx) => {
     const start = new Date(`${from}T00:00:00`);
     const end = new Date(`${to}T23:59:59`);
     const clocks = await prisma.clock.findMany({
-      where: { userId, clockInAt: { gte: start, lte: end } },
+      // Reporting utilisateur: ne calculer que les pointages complets IN+OUT.
+      where: { userId, clockInAt: { gte: start, lte: end }, clockOutAt: { not: null } },
       orderBy: { clockInAt: "asc" },
     });
     const daily = {};
     const weekly = {};
+    const dailyDetailsMap = new Map();
     for (const c of clocks) {
       const dayKey = c.clockInAt.toISOString().slice(0, 10);
-      daily[dayKey] = (daily[dayKey] || 0) + (c.workedMinutes || 0);
+      const workedMinutes = Number(c.workedMinutes || 0);
+      daily[dayKey] = (daily[dayKey] || 0) + workedMinutes;
       const weekKey = `${dayKey.slice(0, 4)}-W${Math.ceil(new Date(dayKey).getDate() / 7)}`;
-      weekly[weekKey] = (weekly[weekKey] || 0) + (c.workedMinutes || 0);
+      weekly[weekKey] = (weekly[weekKey] || 0) + workedMinutes;
+
+      const prev = dailyDetailsMap.get(dayKey);
+      if (!prev) {
+        dailyDetailsMap.set(dayKey, {
+          date: dayKey,
+          firstClockInAt: c.clockInAt,
+          lastClockOutAt: c.clockOutAt,
+          workedMinutes,
+        });
+      } else {
+        const firstClockInAt = c.clockInAt < prev.firstClockInAt ? c.clockInAt : prev.firstClockInAt;
+        const lastClockOutAt = c.clockOutAt > prev.lastClockOutAt ? c.clockOutAt : prev.lastClockOutAt;
+        dailyDetailsMap.set(dayKey, {
+          date: dayKey,
+          firstClockInAt,
+          lastClockOutAt,
+          workedMinutes: prev.workedMinutes + workedMinutes,
+        });
+      }
     }
-    return res.json({ daily, weekly });
+    const dailyDetails = Array.from(dailyDetailsMap.values())
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      .map((d) => ({
+        date: d.date,
+        workedMinutes: d.workedMinutes,
+        arrivalAt: d.firstClockInAt ? d.firstClockInAt.toISOString() : null,
+        departureAt: d.lastClockOutAt ? d.lastClockOutAt.toISOString() : null,
+      }));
+
+    return res.json({ daily, weekly, dailyDetails });
   });
 
   return router;

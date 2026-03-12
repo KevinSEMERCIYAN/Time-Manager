@@ -11,6 +11,8 @@ module.exports = (ctx) => {
     listAccessibleUsers,
     autoCloseOpenClocks,
     isWorkingDay,
+    isAdmin,
+    isManager,
     scheduleForUser,
     parseTimeOnDate,
     audit,
@@ -30,17 +32,21 @@ module.exports = (ctx) => {
     const now = new Date();
     const dateKey = now.toISOString().slice(0, 10);
     const isDevUser = process.env.DEV_AUTH === "true" || process.env.DEV_AUTH === "1";
+    const isPrivilegedActor = isAdmin(req.user) || isManager(req.user);
+    const enforceEmployeeWindow = !isDevUser && !isPrivilegedActor;
 
-    if (!user.contractType) return res.status(400).json({ error: "Clock-in not allowed" });
-    if (!user.scheduleAmStart || !user.scheduleAmEnd || !user.schedulePmStart || !user.schedulePmEnd) {
-      return res.status(400).json({ error: "Clock-in not allowed" });
-    }
-    if (!isDevUser && !isWorkingDay(user, now)) return res.status(400).json({ error: "Clock-in not allowed" });
     const sched = scheduleForUser(user);
     const amStart = parseTimeOnDate(dateKey, sched.amStart);
-    const pmStart = parseTimeOnDate(dateKey, sched.pmStart);
     const pmEnd = parseTimeOnDate(dateKey, sched.pmEnd);
     const graceMs = (sched.graceMin || 15) * 60000;
+
+    if (enforceEmployeeWindow) {
+      if (!user.contractType) return res.status(400).json({ error: "Clock-in not allowed" });
+      if (!user.scheduleAmStart || !user.scheduleAmEnd || !user.schedulePmStart || !user.schedulePmEnd) {
+        return res.status(400).json({ error: "Clock-in not allowed" });
+      }
+      if (!isWorkingDay(user, now)) return res.status(400).json({ error: "Clock-in not allowed" });
+    }
 
     const active = await prisma.clock.findFirst({
       where: { userId: user.id, clockOutAt: null },
@@ -48,20 +54,19 @@ module.exports = (ctx) => {
 
     if ((type || "IN") === "IN") {
       if (active) return res.status(400).json({ error: "Already clocked in" });
-      if (!isDevUser && now.getTime() >= pmEnd.getTime()) return res.status(400).json({ error: "Clock-in not allowed" });
+      if (enforceEmployeeWindow && now.getTime() >= pmEnd.getTime()) {
+        return res.status(400).json({ error: "Clock-in not allowed" });
+      }
 
       let lateMinutes = 0;
-      if (!isDevUser) {
+      if (enforceEmployeeWindow) {
         const nowTs = now.getTime();
         const amStartTs = amStart.getTime();
-        const pmStartTs = pmStart.getTime();
-        const canClockInMorning = nowTs >= amStartTs && nowTs <= amStartTs + graceMs;
-        const canClockInAfternoon = nowTs >= pmStartTs && nowTs <= pmStartTs + graceMs;
-        if (!canClockInMorning && !canClockInAfternoon) {
+        const canClockInOnArrival = nowTs >= amStartTs && nowTs <= amStartTs + graceMs;
+        if (!canClockInOnArrival) {
           return res.status(400).json({ error: "Clock-in not allowed" });
         }
-        const scheduledStart = canClockInAfternoon ? pmStart : amStart;
-        lateMinutes = Math.max(0, Math.floor((nowTs - (scheduledStart.getTime() + graceMs)) / 60000));
+        lateMinutes = Math.max(0, Math.floor((nowTs - (amStart.getTime() + graceMs)) / 60000));
       }
 
       const clock = await prisma.clock.create({
@@ -88,7 +93,7 @@ module.exports = (ctx) => {
     }
 
     if (!active) return res.status(400).json({ error: "No active clock" });
-    if (!isDevUser && now.getTime() >= pmEnd.getTime()) {
+    if (enforceEmployeeWindow && now.getTime() >= pmEnd.getTime()) {
       return res.status(400).json({ error: "Clock-out not allowed after end time" });
     }
 

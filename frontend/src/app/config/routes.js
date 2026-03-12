@@ -4,6 +4,7 @@ export const ROUTES = {
   CLOCK_IN: "/clock-in",
   MY_CLOCKS: "/my-clocks",
   DASHBOARD: "/dashboard",
+  REPORTING: "/reporting",
   PROFILE: "/profile",
   MEMBERS: "/members",
   MEMBERS_CREATE: "/members/create",
@@ -15,6 +16,7 @@ export const isMemberDetailsRoute = (route) => route.startsWith("/members/") && 
 
 export const isProtectedRoute = (route) =>
   route === ROUTES.PROFILE ||
+  route === ROUTES.REPORTING ||
   route === ROUTES.DASHBOARD ||
   route === ROUTES.MY_CLOCKS ||
   route.startsWith(ROUTES.MEMBERS) ||

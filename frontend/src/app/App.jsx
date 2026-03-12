@@ -20,6 +20,7 @@ import { TeamsPage } from "../pages/TeamsPage";
 import { CreateTeamPage } from "../pages/CreateTeamPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { MyClocksPage } from "../pages/MyClocksPage";
+import { ReportingPage } from "../pages/ReportingPage";
 
 export default function App() {
   const [route, setRoute] = useState(window.location.pathname || ROUTES.LANDING);
@@ -53,6 +54,8 @@ export default function App() {
   const [reportUserText, setReportUserText] = useState("");
   const [reportService, setReportService] = useState("ALL");
   const [seedLoading, setSeedLoading] = useState(false);
+  const [seedJobRunning, setSeedJobRunning] = useState(false);
+  const [seedStatus, setSeedStatus] = useState(null);
   const [resetLoading, setResetLoading] = useState(false);
   const [syncAdLoading, setSyncAdLoading] = useState(false);
   const [exportCsvLoading, setExportCsvLoading] = useState(false);
@@ -84,6 +87,7 @@ export default function App() {
   const [provisionLoading, setProvisionLoading] = useState(false);
   const dashboardCacheRef = useRef(new Map());
   const dashboardRequestRef = useRef(null);
+  const DASHBOARD_CACHE_TTL_MS = 60000;
 
   const roles = user?.roles || [];
   const isAdmin =
@@ -110,8 +114,11 @@ export default function App() {
     const max = Math.max(...normalized);
     const range = Math.max(1e-6, max - min);
     const pad = range * 0.15;
-    const yMin = options.baseZero ? 0 : min - pad;
-    return <SparklineChart series={normalized} labels={labels} id={id} color={color} options={{ ...options, yMin, yMax: max + pad }} />;
+    const hasCustomYMin = Number.isFinite(options.yMin);
+    const hasCustomYMax = Number.isFinite(options.yMax);
+    const yMin = hasCustomYMin ? options.yMin : (options.baseZero ? 0 : min - pad);
+    const yMax = hasCustomYMax ? options.yMax : (max + pad);
+    return <SparklineChart series={normalized} labels={labels} id={id} color={color} options={{ ...options, yMin, yMax }} />;
   };
 
   const compressSeries = (series, bucketSize) => {
@@ -176,13 +183,17 @@ export default function App() {
       end = new Date(now);
     }
 
-    const custom = rangeStart && rangeEnd;
     const toYMD = (d) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const rawFrom = custom ? rangeStart : toYMD(start);
-    const rawTo = custom ? rangeEnd : toYMD(end);
-    const toDate = new Date(`${rawTo}T00:00:00`);
-    const safeTo = toDate > today ? today.toISOString().slice(0, 10) : rawTo;
+    const periodFrom = toYMD(start);
+    const periodTo = toYMD(end);
+    let rawFrom = rangeStart || periodFrom;
+    const rawToInput = rangeEnd || periodTo;
+    const toDate = new Date(`${rawToInput}T00:00:00`);
+    const safeTo = toDate > today ? today.toISOString().slice(0, 10) : rawToInput;
+    const fromDate = new Date(`${rawFrom}T00:00:00`);
+    const safeToDate = new Date(`${safeTo}T00:00:00`);
+    if (fromDate > safeToDate) rawFrom = safeTo;
 
     try {
       const q = new URLSearchParams({ from: rawFrom, to: safeTo });
@@ -192,7 +203,7 @@ export default function App() {
       const cacheKey = `${user.id}|${q.toString()}`;
       const nowTs = Date.now();
       const cached = dashboardCacheRef.current.get(cacheKey);
-      if (cached && nowTs - cached.ts < 15000) {
+      if (cached && nowTs - cached.ts < DASHBOARD_CACHE_TTL_MS) {
         setReport(cached.data);
         return;
       }
@@ -338,7 +349,7 @@ export default function App() {
   };
 
   const resetData = async () => {
-    if (resetLoading) return;
+    if (resetLoading || seedJobRunning) return;
     try {
       setResetLoading(true);
       setError("");
@@ -354,21 +365,70 @@ export default function App() {
   };
 
   const seedData = async () => {
-    if (seedLoading) return;
+    if (seedLoading || seedJobRunning) return;
     try {
       setSeedLoading(true);
       setError("");
-      // Toujours générer sur 12 mois pour alimenter la vue annuelle.
-      await apiFetch("/admin/seed?days=365", { method: "POST" });
-      dashboardCacheRef.current.clear();
-      await loadDashboard();
-      setSuccessMessage("Pointages générés.");
+      // Par défaut, on génère toujours 12 mois pour garantir une vue annuelle complète.
+      let seedDays = 365;
+      if (rangeStart && rangeEnd) {
+        const startMs = new Date(`${rangeStart}T00:00:00`).getTime();
+        const endMs = new Date(`${rangeEnd}T00:00:00`).getTime();
+        if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+          const days = Math.floor((endMs - startMs) / 86400000) + 1;
+          seedDays = Math.max(1, Math.min(365, days));
+        }
+      }
+      const resp = await apiFetch(`/admin/seed?days=${seedDays}&async=true`, { method: "POST" });
+      const status = resp?.status || null;
+      if (status) setSeedStatus(status);
+      setSeedJobRunning(Boolean(status?.running));
+      setSuccessMessage(`Génération lancée (${seedDays} jours, tous les utilisateurs en team).`);
     } catch (err) {
       setError(err.message);
     } finally {
       setSeedLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!user || !isAdmin || !seedJobRunning) return;
+    let cancelled = false;
+    let intervalId = null;
+
+    const pollStatus = async () => {
+      try {
+        const statusResp = await apiFetch("/admin/seed-status");
+        if (cancelled) return;
+        const status = statusResp?.status || null;
+        if (!status) return;
+        setSeedStatus(status);
+        if (!status.running) {
+          setSeedJobRunning(false);
+          if (status.error) {
+            setError(status.error);
+            return;
+          }
+          dashboardCacheRef.current.clear();
+          await loadDashboard();
+          setSuccessMessage(
+            `Pointages générés (${status.generated || 0} lignes, ${status.totalUsers || 0}/${status.eligibleUsers || status.totalUsers || 0} utilisateurs).`
+          );
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setSeedJobRunning(false);
+        setError(err.message);
+      }
+    };
+
+    pollStatus();
+    intervalId = setInterval(pollStatus, 1500);
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [seedJobRunning, user, isAdmin]);
 
   const syncAdUsers = async () => {
     if (syncAdLoading) return;
@@ -663,6 +723,27 @@ export default function App() {
     if (isAdmin || isManager) loadUsers();
   }, [user]);
 
+  useEffect(() => {
+    if (!user || !isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const statusResp = await apiFetch("/admin/seed-status");
+        if (cancelled) return;
+        const status = statusResp?.status || null;
+        if (status) {
+          setSeedStatus(status);
+          setSeedJobRunning(Boolean(status.running));
+        }
+      } catch {
+        // ignore on load
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, isAdmin]);
+
   const appCtx = {
     route,
     navigate,
@@ -717,6 +798,8 @@ export default function App() {
     resetData,
     seedData,
     seedLoading,
+    seedJobRunning,
+    seedStatus,
     resetLoading,
     syncAdLoading,
     syncAdUsers,
@@ -777,6 +860,8 @@ export default function App() {
     content = withShell(<DashboardPage ctx={appCtx} />, { showFilters: true, showUserPanel: true });
   } else if (route === ROUTES.MY_CLOCKS) {
     content = withShell(<MyClocksPage ctx={appCtx} />, { showFilters: false, showUserPanel: true });
+  } else if (route === ROUTES.REPORTING) {
+    content = withShell(<ReportingPage ctx={appCtx} />, { showFilters: true, showUserPanel: true });
   } else if (route === ROUTES.PROFILE) {
     content = withShell(<ProfilePage ctx={appCtx} />);
   } else if (route === ROUTES.MEMBERS) {

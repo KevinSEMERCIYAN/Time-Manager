@@ -33,17 +33,18 @@ module.exports = (ctx) => {
         isActive: true,
         isProvisioned: true,
       };
+      let managerTeamIds = [];
 
       if (isManager(req.user) && !isAdmin(req.user)) {
-        const dept = req.user.department || null;
-        if (!dept) {
+        managerTeamIds = await getManagerTeamIds(req.user.id);
+        if (!managerTeamIds.length) {
           return res.json({
             users: [],
             pagination: { page, pageSize, total: 0, totalPages: 0 },
           });
         }
-        where.department = dept;
         where.roles = { path: "$", array_contains: "EMPLOYEE" };
+        where.teams = { some: { teamId: { in: managerTeamIds } } };
       } else if (role && ["ADMIN", "MANAGER", "EMPLOYEE"].includes(role)) {
         where.roles = { path: "$", array_contains: role };
       }
@@ -53,9 +54,18 @@ module.exports = (ctx) => {
       }
 
       if (team === "__NONE__") {
+        if (isManager(req.user) && !isAdmin(req.user)) {
+          return res.json({
+            users: [],
+            pagination: { page, pageSize, total: 0, totalPages: 0 },
+          });
+        }
         where.teams = { none: {} };
       } else if (team) {
-        where.teams = { some: { team: { name: team } } };
+        // Conserve la contrainte "manager -> seulement ses équipes"
+        // en ajoutant un AND au lieu d'écraser le filtre where.teams.
+        where.AND = Array.isArray(where.AND) ? where.AND : [];
+        where.AND.push({ teams: { some: { team: { name: team } } } });
       }
 
       if (search) {

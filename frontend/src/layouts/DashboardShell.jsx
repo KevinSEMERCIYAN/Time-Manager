@@ -46,6 +46,27 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
     return Array.from(out).sort((a, b) => a.localeCompare(b));
   }, [teams, users]);
 
+  const [profileMenuOpen, setProfileMenuOpen] = React.useState(false);
+  const profileMenuRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!profileMenuOpen) return undefined;
+    const onDocMouseDown = (event) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    const onDocKeyDown = (event) => {
+      if (event.key === "Escape") setProfileMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onDocKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onDocKeyDown);
+    };
+  }, [profileMenuOpen]);
+
   return (
     <div className="tm-dashboard-shell">
       <header className="tm-dashboard-topbar">
@@ -70,7 +91,7 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
             <div className="tm-topbar-select-group">
               {navBtn("/dashboard", "Dashboard")}
               {navBtn("/my-clocks", "Mes pointages")}
-              {navBtn("/profile", "Mon profil")}
+              {(isAdmin || isManager) && navBtn("/reporting", "Reporting")}
               {(isAdmin || isManager) && navBtn("/teams", "Gestion équipes")}
               {(isAdmin || isManager) && navBtn("/members", "Gestion employés")}
             </div>
@@ -95,24 +116,52 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
           </button>
 
           {options.showUserPanel && (
-            <>
-              <button
-                className="tm-topbar-pill"
-                style={{ fontSize: 12 }}
-                onClick={() => openClockModal(user)}
-              >
-                <Clock size={14} /> Pointer
-              </button>
-              <button
-                className="tm-avatar-circle"
-                aria-label="Profil"
-                onClick={() => navigate("/profile")}
-                style={{ border: "none", cursor: "pointer" }}
-              >
-                <User size={18} />
-              </button>
-            </>
+            <button
+              className="tm-topbar-pill"
+              style={{ fontSize: 12 }}
+              onClick={() => openClockModal(user)}
+            >
+              <Clock size={14} /> Pointer
+            </button>
           )}
+          <div className="tm-profile-menu" ref={profileMenuRef}>
+            <button
+              className="tm-avatar-circle"
+              aria-label="Profil"
+              aria-haspopup="menu"
+              aria-expanded={profileMenuOpen}
+              onClick={() => setProfileMenuOpen((v) => !v)}
+              style={{ border: "none", cursor: "pointer" }}
+            >
+              <User size={18} />
+            </button>
+            {profileMenuOpen && (
+              <div className="tm-profile-dropdown" role="menu">
+                <button
+                  type="button"
+                  className="tm-profile-dropdown-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    navigate("/profile");
+                  }}
+                >
+                  Voir mon profil
+                </button>
+                <button
+                  type="button"
+                  className="tm-profile-dropdown-item tm-profile-dropdown-item-danger"
+                  role="menuitem"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    onLogout();
+                  }}
+                >
+                  Se déconnecter
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -149,13 +198,12 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
             </div>
 
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
-              {(isAdmin || isManager) && (
+              {isAdmin && (
                 <select
                   value={reportService}
                   onChange={(e) => setReportService(e.target.value)}
                   className="tm-input"
                   style={{ minWidth: 170 }}
-                  disabled={isManager && !isAdmin}
                 >
                   <option value="ALL">Tous services</option>
                   {serviceOptions.map((s) => (
@@ -213,16 +261,6 @@ export function DashboardShell({ ctx, options = {}, footerLeft = null, footerRig
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             {footerRight}
-            {options.showLogoutFooter !== false && (
-              <button
-                type="button"
-                onClick={onLogout}
-                className="tm-button-outline tm-button-danger"
-              >
-                <Clock size={14} style={{ marginRight: 4 }} />
-                Se déconnecter
-              </button>
-            )}
           </div>
         </div>
       </main>

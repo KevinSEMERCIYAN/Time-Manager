@@ -86,6 +86,8 @@ model Clock {
   updatedAt     DateTime    @updatedAt
 
   @@index([userId, date])
+  @@index([date])
+  @@index([date, userId])
 }
 
 model AuditLog {

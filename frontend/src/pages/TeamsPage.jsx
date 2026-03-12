@@ -3,7 +3,8 @@ import React from "react";
 export function TeamsPage({ ctx }) {
   const { isAdmin, isManager, teams, navigate, openEditTeam, setTeamToDelete } = ctx;
   const [search, setSearch] = React.useState("");
-  const [roleFilter, setRoleFilter] = React.useState("ALL");
+  const [serviceFilter, setServiceFilter] = React.useState("ALL");
+  const showAdminFilters = isAdmin && !isManager;
 
   const teamRole = (team) => {
     const roles = Array.isArray(team?.manager?.roles) ? team.manager.roles : [];
@@ -21,6 +22,15 @@ export function TeamsPage({ ctx }) {
     return "Non assigne";
   };
 
+  const serviceOptions = React.useMemo(() => {
+    const set = new Set();
+    for (const t of teams || []) {
+      const s = (t?.department || "").trim();
+      if (s) set.add(s);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [teams]);
+
   const filtered = (teams || [])
     .filter((t) => {
       const q = search.trim().toLowerCase();
@@ -28,7 +38,7 @@ export function TeamsPage({ ctx }) {
       const hay = `${t.name || ""} ${t.department || ""} ${t.manager?.displayName || ""} ${teamRoleLabel(t)}`.toLowerCase();
       return hay.includes(q);
     })
-    .filter((t) => (roleFilter === "ALL" ? true : teamRole(t) === roleFilter))
+    .filter((t) => (serviceFilter === "ALL" ? true : (t.department || "") === serviceFilter))
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   return (
@@ -42,21 +52,20 @@ export function TeamsPage({ ctx }) {
         </div>
       )}
 
-      {(isAdmin || isManager) && (
+      {showAdminFilters && (
         <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Rechercher (team, service, manager, role)"
+            placeholder="Rechercher (team, service, manager)"
             className="tm-input"
             style={{ minWidth: 280, maxWidth: 480 }}
           />
-          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="tm-input" style={{ width: 180 }}>
-            <option value="ALL">Tous les roles</option>
-            <option value="MANAGER">Manager</option>
-            <option value="ADMIN">Admin</option>
-            <option value="EMPLOYEE">Employe</option>
-            <option value="UNASSIGNED">Non assigne</option>
+          <select value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)} className="tm-input" style={{ width: 220 }}>
+            <option value="ALL">Tous les services</option>
+            {serviceOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
           </select>
         </div>
       )}
@@ -68,7 +77,6 @@ export function TeamsPage({ ctx }) {
               <tr style={{ background: "var(--tm-surface-soft)" }}>
                 <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>Equipe</th>
                 <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>Service</th>
-                <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>Role team</th>
                 <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>Nb utilisateurs</th>
                 <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>Manager</th>
                 <th style={{ textAlign: "right", padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>Actions</th>
@@ -79,7 +87,6 @@ export function TeamsPage({ ctx }) {
                 <tr key={t.id}>
                   <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--tm-border)", color: "var(--tm-text-main)" }}>{t.name}</td>
                   <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>{t.department || "N/A"}</td>
-                  <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>{teamRoleLabel(t)}</td>
                   <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>{t._count?.members ?? t.members?.length ?? 0}</td>
                   <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--tm-border)" }}>{t.manager?.displayName || "N/A"}</td>
                   <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--tm-border)", textAlign: "right" }}>

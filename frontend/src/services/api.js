@@ -1,5 +1,5 @@
-export const apiFetch = async (path, options = {}) => {
-  const res = await fetch(`/api${path}`, {
+const rawApiFetch = async (path, options = {}) =>
+  fetch(`/api${path}`, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
@@ -7,6 +7,21 @@ export const apiFetch = async (path, options = {}) => {
     },
     ...options,
   });
+
+export const apiFetch = async (path, options = {}) => {
+  let res = await rawApiFetch(path, options);
+  const canRetryWithRefresh =
+    res.status === 401 &&
+    path !== "/auth/login" &&
+    path !== "/auth/refresh" &&
+    path !== "/auth/logout";
+
+  if (canRetryWithRefresh) {
+    const refreshRes = await rawApiFetch("/auth/refresh", { method: "POST" });
+    if (refreshRes.ok) {
+      res = await rawApiFetch(path, options);
+    }
+  }
 
   const raw = await res.text();
   let data = {};

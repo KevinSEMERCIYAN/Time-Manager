@@ -15,6 +15,8 @@ export function MembersPage({ ctx }) {
     setError,
     successMessage,
   } = ctx;
+  const showAdminFilters = isAdmin && !isManager;
+  const showManagerBasicFilters = isManager && !isAdmin;
 
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
@@ -126,7 +128,7 @@ export function MembersPage({ ctx }) {
         )}
       </div>
 
-      {(isAdmin || isManager) && (
+      {showAdminFilters && (
         <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input
             value={searchInput}
@@ -135,14 +137,12 @@ export function MembersPage({ ctx }) {
             className="tm-input"
             style={{ minWidth: 260, maxWidth: 460 }}
           />
-          {isAdmin && (
-            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="tm-input" style={{ width: 180 }}>
-              <option value="ALL">Tous les roles</option>
-              <option value="EMPLOYEE">Employes</option>
-              <option value="MANAGER">Managers</option>
-              <option value="ADMIN">Admins</option>
-            </select>
-          )}
+          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="tm-input" style={{ width: 180 }}>
+            <option value="ALL">Tous les roles</option>
+            <option value="EMPLOYEE">Employes</option>
+            <option value="MANAGER">Managers</option>
+            <option value="ADMIN">Admins</option>
+          </select>
           <select value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)} className="tm-input" style={{ width: 180 }}>
             <option value="ALL">Tous les services</option>
             {serviceOptions.map((s) => (
@@ -160,6 +160,25 @@ export function MembersPage({ ctx }) {
               </option>
             ))}
           </select>
+          <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))} className="tm-input" style={{ width: 120 }}>
+            {PAGE_SIZES.map((s) => (
+              <option key={s} value={s}>
+                {s} / page
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {showManagerBasicFilters && (
+        <div style={{ marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Rechercher (nom, service, role, equipe)"
+            className="tm-input"
+            style={{ minWidth: 260, maxWidth: 460 }}
+          />
           <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))} className="tm-input" style={{ width: 120 }}>
             {PAGE_SIZES.map((s) => (
               <option key={s} value={s}>
